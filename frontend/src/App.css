@@ -325,3 +325,95 @@ td input {
   gap: 0.5rem;
   justify-content: flex-end;
 }
+
+/* Top Navigation */
+.top-nav {
+  display: flex;
+  gap: 0.25rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.top-nav a {
+  padding: 0.4rem 1rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.top-nav a:hover { color: var(--text); background: rgba(59, 130, 246, 0.1); }
+.top-nav a.active { color: var(--primary); background: rgba(59, 130, 246, 0.15); }
+
+/* Run Selector */
+.run-list { list-style: none; margin-top: 0.75rem; }
+.run-list li {
+  padding: 0.5rem;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+.run-list li:hover { background: rgba(59, 130, 246, 0.1); }
+.run-stats { color: var(--text-muted); margin-left: auto; }
+
+/* Run Summary */
+.progress-bar-container {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  margin: 0.75rem 0 0.5rem;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: var(--success);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+.run-counts {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.8rem;
+}
+.count-complete { color: var(--success); }
+.count-failed { color: var(--danger); }
+.count-pending { color: var(--text-muted); }
+.count-retrying { color: var(--warning); }
+
+/* Status badges */
+.badge-danger { background: #7f1d1d; color: #fecaca; }
+
+/* Error Log */
+.error-list { list-style: none; }
+.error-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+.error-detail { color: var(--danger); flex: 1; }
+.error-meta { color: var(--text-muted); font-size: 0.75rem; }
+.error-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Raw Content Viewer */
+.raw-content-modal { width: 600px; }
+.metadata-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+.meta-item .label {
+  display: block;
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.meta-item .value { font-size: 0.9rem; }
