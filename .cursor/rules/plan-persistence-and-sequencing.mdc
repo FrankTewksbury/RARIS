@@ -1,0 +1,162 @@
+---
+name: plan-persistence-and-sequencing
+description: Persist AI-generated artifacts as sequenced files (NNN-type-slug.md) across all DFW content directories with same-session correlation.
+alwaysApply: true
+---
+
+# Overview
+
+This project follows the DevFlywheel (DFW) methodology. All AI-generated artifacts — plans, prompts, specs, handoffs, context documents, and research — MUST be persisted as sequenced Markdown files inside the appropriate DFW content directory.
+
+## DFW Content Directories (always lowercase)
+
+| Directory    | What Goes Here                                              |
+|------------- |-------------------------------------------------------------|
+| `docs/`      | Long-lived documentation, specs, architecture, ADRs         |
+| `plans/`     | TODOs, roadmaps, wishlists, sprint plans, active tasks      |
+| `prompts/`   | System prompts, handoffs, reusable prompt templates         |
+| `context/`   | Active context, decisions log, retrospectives               |
+| `research/`  | Research artifacts, analysis, findings, literature reviews   |
+
+IMPORTANT: Directory names are ALWAYS lowercase. Never use `Plans/`, `Docs/`, `Prompts/`, etc.
+
+## RULE: Planning Output Must Be Persisted
+
+- When the user asks for a plan (or you enter planning mode), you MUST produce a structured plan and persist it as a Markdown file under `plans/`.
+- If the target directory does not exist, create it.
+- Route the artifact to the correct DFW directory based on its type (see Artifact Types below).
+
+## RULE: Filename Pattern — `NNN-type-slug.md`
+
+Every sequenced Markdown file MUST follow this pattern:
+
+```
+<directory>/NNN-type-slug.md
+```
+
+Where:
+- `NNN` = 3-digit zero-padded sequence number (`001`, `002`, `003`, ...)
+- `type` = a recognized DFW artifact type (see table below)
+- `slug` = kebab-case descriptive name
+
+### Recognized Artifact Types
+
+| Type           | Used For                                          | Target Directory |
+|--------------- |---------------------------------------------------|------------------|
+| `plan`         | Plans, roadmaps, sprint plans                     | `plans/`         |
+| `prompt`       | Reusable prompts, system prompts                  | `prompts/`       |
+| `handoff`      | Context handoffs between tools or sessions        | `prompts/`       |
+| `spec`         | Specifications, requirements                      | `docs/`          |
+| `doc`          | General documentation, guides, references         | `docs/`          |
+| `adr`          | Architecture Decision Records                     | `docs/`          |
+| `analysis`     | Analysis, deep dives                              | `research/`      |
+| `research`     | Research findings, literature reviews              | `research/`      |
+| `retro`        | Retrospectives, post-session learnings            | `context/`       |
+| `context`      | Active context snapshots                          | `context/`       |
+| `decision`     | Decision records, decisions log entries            | `context/`       |
+| `journal`      | Journal entries, session logs                     | `context/`       |
+| `note`         | Notes, scratchpad content                         | `docs/`          |
+| `output`       | AI-generated outputs, reports                     | `docs/`          |
+
+### Filename Examples
+
+```
+plans/001-plan-ontology-ingestion.md
+plans/002-plan-frontend-revamp.md
+prompts/001-prompt-system-architect.md
+prompts/002-handoff-cursor-to-claude.md
+docs/001-spec-api-design.md
+docs/002-adr-caching-strategy.md
+context/001-retro-sprint-3.md
+research/001-analysis-vector-db-comparison.md
+```
+
+## RULE: Sequencing Is Per-Directory
+
+Each DFW content directory maintains its own independent sequence counter:
+
+- `plans/` starts at `001` and increments within `plans/`
+- `docs/` starts at `001` and increments within `docs/`
+- `prompts/` starts at `001` and increments within `prompts/`
+- etc.
+
+Sequence numbers do NOT span across directories.
+
+## RULE: How To Pick The Next NNN
+
+Before creating a new file in a directory:
+
+- Look at existing files in that directory that start with `NNN-`.
+- Compute the next available sequence:
+  - If none exist, use `001`
+  - Else use `(max NNN) + 1`
+- Do NOT reuse an existing sequence number.
+
+## RULE: Same-Session Correlation
+
+Because sequence numbers increment per file, correlation across files created in the same session MUST be done via a shared `sessionId`.
+
+- Create a `sessionId` once per session and reuse it for all artifacts created in that session.
+- `sessionId` format:
+  - `S<YYYYMMDD>_<HHMM>` (example: `S20260124_1430`)
+
+## RULE: Required Front-Matter
+
+Every sequenced Markdown file MUST start with YAML frontmatter including these fields:
+
+### Required
+
+- `type`: The artifact type from the table above
+- `created`: ISO timestamp
+
+### Recommended
+
+- `sessionId`: The shared session correlation ID
+- `source`: Origin tool (`cursor-plan`, `cursor-agent`, `claude-desktop`, `manual`)
+- `description`: One-line summary (used by the Resync dependency graph)
+
+### Optional
+
+- `source_prompt`: Relative path to the prompt that produced this output (used for graph edges)
+- `phase`: Project phase identifier
+- `iteration`: Iteration number or label
+
+### Example frontmatter
+
+```yaml
+---
+type: plan
+created: 2026-02-14T14:30:00
+sessionId: S20260214_1430
+source: cursor-plan
+description: Plan for reconciling DFW sequencing conventions
+---
+```
+
+## RULE: Plan Document Structure
+
+Persisted plans MUST include, in this order:
+
+- `## Goal`
+- `## Constraints` (include numbering/persistence constraints)
+- `## Implementation steps` (concise, actionable)
+- `## Files to create/update` (paths)
+- `## Validation` (how to verify)
+
+## RULE: When Creating Multiple Related Outputs
+
+- Each output file gets its own incremented `NNN-type-slug.md` filename within its target directory.
+- All related outputs created in the same session MUST share the same `sessionId` in frontmatter.
+
+## RULE: If The User Specifies A Different Destination
+
+- If the user requests a different folder than the default DFW directory, follow the user.
+- Still enforce the same `NNN-type-slug` 3-digit prefix sequencing within that destination folder.
+
+## RULE: Files That Are NOT Sequenced
+
+The following files are DFW structural files and should NOT be renamed or sequenced:
+
+- Files prefixed with `_` (e.g., `_TODO.md`, `_WISHLIST.md`, `_ROADMAP.md`, `_ACTIVE_CONTEXT.md`, `_DECISIONS_LOG.md`, `_TEMPLATE.md`)
+- `README.md`, `CHANGELOG.md`, `ARCHITECTURE.md`, `PROJECT_OVERVIEW.md`
+- Any file inside `.dfw/`

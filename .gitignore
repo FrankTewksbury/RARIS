@@ -1,0 +1,23 @@
+.env
+.DS_Store
+Thumbs.db
+
+# DFW caches, personal config, and state files
+.dfw/.resync-sequence-cache.json
+.dfw/.resync-graph-cache.json
+.dfw/personal-config.md
+.dfw/session-state.json
+.dfw-state/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Node / TypeScript
+node_modules/
+dist/
+out/

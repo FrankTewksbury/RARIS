@@ -1,0 +1,149 @@
+---
+name: log-file-rule
+description: Rule to instruct AI to write log files and destination combined with any other log rule previously created
+---
+
+# Overview
+
+This rule defines logging standards for all scripts including console output colors,
+file logging structure, and naming conventions.
+
+---
+
+## RULE: Logging Standards (Required)
+
+### 1. Initialization
+
+- All scripts MUST initialize logging before executing any operational logic.
+
+- Logging setup MUST be implemented as:
+  - a shared logging module, OR
+  - a dedicated logging initialization function.
+  Inline or duplicated logging configuration in individual scripts is NOT allowed.
+
+- If the `logs` directory does not exist, the logging module/function
+  MUST create it at runtime.
+
+- Logging failures MUST NOT fail silently.
+  - Errors during logging initialization MUST be surfaced clearly.
+
+---
+
+### 2. Console Output Colors
+
+Console messages MUST use the following color scheme:
+
+| Level              | Color         | ANSI Code       |
+|--------------------|---------------|-----------------|
+| HEADERS            | **GREEN**     | `\033[92m`      |
+| INFO / Normal text | **WHITE**     | `\033[97m`      |
+| DEBUG / Warnings   | **YELLOW**    | `\033[93m`      |
+| ERROR / Critical   | **RED**       | `\033[91m`      |
+| NODE PROCESSING    | **PURPLE**    | `\033[95m`      |
+
+- Headers follow the `print-header-style` rule (Major: `===`, Minor: `---`)
+- All header text in console MUST be GREEN
+- Node processing messages (e.g., retrieving teams) MUST be PURPLE with minor header format
+- Use colorama or ANSI escape codes for cross-platform compatibility
+
+Example color constants (Python):
+```python
+class LogColors:
+    HEADER = "\033[92m"   # Green - for headers
+    INFO = "\033[97m"     # White - for info/normal
+    DEBUG = "\033[93m"    # Yellow - for debug/warnings  
+    WARNING = "\033[93m"  # Yellow - for warnings
+    ERROR = "\033[91m"    # Red - for errors
+    CRITICAL = "\033[91m" # Red - for critical
+    NODE = "\033[95m"     # Purple - for node processing
+    RESET = "\033[0m"     # Reset to default
+```
+
+---
+
+### 3. Log File Types
+
+All log files MUST be written to a subdirectory named `logs`
+located in the same directory as the executing script.
+
+Three separate log files MUST be maintained:
+
+| Log Type      | Contents                                           |
+|---------------|----------------------------------------------------|
+| **General**   | All operational events (startup, config, actions, shutdown) |
+| **Debug**     | DEBUG level messages only (for troubleshooting)    |
+| **Error**     | ERROR and CRITICAL messages with full stack traces |
+
+- All errors MUST also be logged to the general execution log.
+- Debug messages MUST also be logged to the general execution log.
+
+---
+
+### 4. Log File Naming Convention
+
+Log files MUST follow this naming pattern:
+
+```
+<script_name>_<log_type>_<YYYYMMDD>_<SEQ>.log
+```
+
+**Components:**
+- `<script_name>`: Name of the executing script (without extension)
+- `<log_type>`: One of `general`, `debug`, or `error`
+- `<YYYYMMDD>`: Date in ISO format (e.g., 20260111)
+- `<SEQ>`: 3-digit sequence number, zero-padded (000-999)
+
+**Sequence Number Rules:**
+- MUST be exactly 3 digits, zero-padded (e.g., `000`, `001`, `042`)
+- MUST start at `000` for the first execution of each new day
+- MUST increment by 1 for each subsequent execution on the same day
+- Resets to `000` when the date changes
+
+**Examples:**
+```
+main_general_20260111_000.log   # First run of the day
+main_debug_20260111_000.log
+main_error_20260111_000.log
+
+main_general_20260111_001.log   # Second run same day
+main_debug_20260111_001.log
+main_error_20260111_001.log
+
+main_general_20260112_000.log   # First run next day (resets to 000)
+```
+
+---
+
+### 5. Log Format
+
+All log files MUST follow the established project log formatting:
+
+```
+[TIMESTAMP] [LEVEL] [SOURCE] MESSAGE
+```
+
+- **TIMESTAMP**: ISO 8601 format (`YYYY-MM-DD HH:MM:SS.mmm`)
+- **LEVEL**: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+- **SOURCE**: Module or function name
+- **MESSAGE**: The log message
+
+Error logs MUST include full context:
+- Timestamp
+- Severity
+- Source
+- Message
+- Stack trace (where applicable)
+
+---
+
+### 6. Summary Checklist
+
+- [ ] Logging initialized before any operational logic
+- [ ] Shared logging module or function (no inline config)
+- [ ] Console colors: GREEN headers, WHITE INFO, YELLOW debug/warn, RED error
+- [ ] Three log files: general, debug, error
+- [ ] Logs written to `./logs/` directory (auto-created if missing)
+- [ ] File names: `<script>_<type>_<YYYYMMDD>_<SEQ>.log`
+- [ ] Sequence: 3-digit, starts at 000, resets daily
+- [ ] Errors logged to both general and error logs
+- [ ] Debug messages logged to both general and debug logs

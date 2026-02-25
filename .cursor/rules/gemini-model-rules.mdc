@@ -1,0 +1,178 @@
+---
+name: gemini-model-rules
+description: Google Gemini-Specific Implementation Patterns for Research Graph RAG
+alwaysApply: false
+---
+
+# Gemini Model Rules
+# Google Gemini-Specific Implementation Patterns
+
+---
+
+## 1. Model Selection
+
+### Available Models (Gemini 3 Series - Latest)
+| Model ID | Use Case | Thinking Budget | Notes |
+|----------|----------|-----------------|-------|
+| `gemini-3-pro-preview` | **DEFAULT** - Complex reasoning, ontology discovery, schema analysis | 32768 | Most capable, highest accuracy |
+| `gemini-3-flash-preview` | High-speed enumeration, batch processing, entity extraction | 16384 | Fast, cost-effective |
+
+### Task-Based Selection for Research Graph RAG
+| Task Type | Model | Thinking Budget | Notes |
+|-----------|-------|-----------------|-------|
+| Entity Extraction | `gemini-3-flash-preview` | 8192 | Fast batch processing |
+| Relation Extraction | `gemini-3-flash-preview` | 8192 | Volume enumeration |
+| Theme Classification | `gemini-3-flash-preview` | 4096 | Quick categorization |
+| Complex Summarization | `gemini-3-pro-preview` | 24576 | Deep reasoning required |
+| Document Analysis | `gemini-3-pro-preview` | 32768 | Structure analysis |
+
+### Deprecated Models - DO NOT USE
+- `gemini-1.5-pro` → Use `gemini-3-pro-preview`
+- `gemini-1.5-flash` → Use `gemini-3-flash-preview`
+- `gemini-pro` → Use `gemini-3-pro-preview`
+
+---
+
+## 2. API Implementation (Python)
+
+### Client Initialization
+```python
+from google import genai
+from google.genai import types
+import os
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+```
+
+### Basic Request Pattern
+```python
+def call_gemini(
+    prompt: str,
+    model: str = "gemini-3-pro-preview",
+    thinking_budget: int = 24576,
+    temperature: float = 0.7
+) -> str:
+    """Make a request to Gemini API."""
+    print(f"[INFO] Initializing Gemini Model: {model}")
+    
+    config = types.GenerateContentConfig(temperature=temperature)
+    config.thinking_config = types.ThinkingConfig(thinking_budget=thinking_budget)
+    
+    response = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=config
+    )
+    return response.text
+```
+
+### JSON Mode Enforcement
+```python
+config = types.GenerateContentConfig(
+    response_mime_type="application/json",
+    response_schema={
+        "type": "object",
+        "properties": {
+            "entities": {"type": "array"},
+            "relations": {"type": "array"}
+        },
+        "required": ["entities"]
+    }
+)
+```
+
+---
+
+## 3. Thinking Budget Configuration
+
+### Budget Guidelines
+| Complexity | Thinking Budget | Use Case |
+|------------|-----------------|----------|
+| Minimal | 0-1024 | Simple lookups, formatting |
+| Low | 4096 | Basic Q&A, theme classification |
+| Medium | 8192 | Entity extraction, summaries |
+| High | 16384 | Complex analysis, batch enumeration |
+| Very High | 24576 | Deep reasoning, problem solving |
+| Maximum | 32768 | Ontology discovery, schema analysis |
+
+---
+
+## 4. Embeddings
+
+### Embedding Model
+Use `text-embedding-005` for high-quality semantic embeddings:
+
+```python
+def get_embedding(text: str) -> list[float]:
+    """Generate embedding for text using Gemini."""
+    response = client.models.embed_content(
+        model="text-embedding-005",
+        content=text
+    )
+    return response.embedding
+```
+
+---
+
+## 5. Error Handling
+
+### Gemini-Specific Exceptions
+```python
+from google.api_core.exceptions import (
+    ResourceExhausted,
+    DeadlineExceeded,
+    InvalidArgument,
+    PermissionDenied
+)
+
+def call_gemini_with_retry(func, max_retries: int = 3):
+    """Call Gemini with retry logic for common errors."""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except ResourceExhausted:
+            wait = 2 ** attempt
+            print(f"[WARN] Rate limited, waiting {wait}s...")
+            time.sleep(wait)
+        except DeadlineExceeded:
+            print(f"[WARN] Timeout, attempt {attempt + 1}/{max_retries}")
+            time.sleep(1)
+        except InvalidArgument as e:
+            print(f"[ERROR] Invalid request: {e}")
+            raise
+        except PermissionDenied as e:
+            print(f"[ERROR] Permission denied: {e}")
+            raise
+    
+    raise Exception("All retry attempts failed")
+```
+
+---
+
+## 6. Quick Reference
+
+### Environment Variable
+```
+GEMINI_API_KEY=your_api_key_here
+```
+
+### Minimal Working Example
+```python
+import os
+from google import genai
+from google.genai import types
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+
+response = client.models.generate_content(
+    model="gemini-3-flash-preview",
+    contents="Extract entities from this text: ...",
+    config=types.GenerateContentConfig(
+        thinking_config=types.ThinkingConfig(thinking_budget=8192)
+    )
+)
+
+print(response.text)
+```

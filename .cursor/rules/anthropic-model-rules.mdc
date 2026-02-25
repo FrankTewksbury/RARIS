@@ -1,0 +1,208 @@
+---
+name: anthropic-model-rules
+description: Claude-Specific Implementation Patterns for Research Graph RAG
+---
+
+# Anthropic Model Rules
+# Claude-Specific Implementation Patterns
+
+---
+
+## 1. Model Selection
+
+### Available Models
+| Model ID | Use Case | Context Window |
+|----------|----------|----------------|
+| `claude-sonnet-4-20250514` | Balanced performance, query understanding | 200K tokens |
+| `claude-opus-4-20250514` | Complex reasoning, research analysis | 200K tokens |
+
+### Task-Based Selection for Research Graph RAG
+| Task Type | Model | Extended Thinking |
+|-----------|-------|-------------------|
+| Query Understanding | `claude-sonnet-4-20250514` | Disabled |
+| Search Refinement | `claude-sonnet-4-20250514` | Optional |
+| Research Analysis | `claude-opus-4-20250514` | Enabled |
+| Complex Summarization | `claude-opus-4-20250514` | Enabled |
+| Multi-step Reasoning | `claude-opus-4-20250514` | Enabled |
+
+### Deprecated Models - DO NOT USE
+- `claude-3-opus-20240229` → Use `claude-opus-4-20250514`
+- `claude-3-sonnet-20240229` → Use `claude-sonnet-4-20250514`
+- `claude-3-haiku-20240307` → Use `claude-sonnet-4-20250514`
+
+---
+
+## 2. API Implementation (Python)
+
+### Client Initialization
+```python
+import anthropic
+import os
+
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+```
+
+### Basic Request Pattern
+```python
+def call_claude(
+    prompt: str,
+    model: str = "claude-sonnet-4-20250514",
+    system_prompt: str = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.7
+) -> str:
+    """Make a request to Claude API."""
+    print(f"[INFO] Initializing Anthropic Model: {model}")
+    
+    messages = [{"role": "user", "content": prompt}]
+    
+    kwargs = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": messages,
+        "temperature": temperature
+    }
+    
+    if system_prompt:
+        kwargs["system"] = system_prompt
+    
+    response = client.messages.create(**kwargs)
+    return response.content[0].text
+```
+
+---
+
+## 3. Extended Thinking Configuration
+
+### Budget Guidelines
+| Complexity | Budget Tokens | Use Case |
+|------------|---------------|----------|
+| Disabled | 0 | Simple queries, fast responses |
+| Low | 4096 | Basic reasoning |
+| Medium | 10000 | Multi-step problems |
+| High | 20000 | Complex analysis |
+| Maximum | 32000 | Deep reasoning, research |
+
+### Extended Thinking Pattern
+```python
+def call_claude_with_thinking(
+    prompt: str,
+    model: str = "claude-opus-4-20250514",
+    budget_tokens: int = 10000
+) -> dict:
+    """Call Claude with extended thinking enabled."""
+    print(f"[INFO] Initializing Anthropic Model: {model} with thinking budget: {budget_tokens}")
+    
+    response = client.messages.create(
+        model=model,
+        max_tokens=16000,
+        thinking={
+            "type": "enabled",
+            "budget_tokens": budget_tokens
+        },
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    result = {"thinking": None, "response": None}
+    for block in response.content:
+        if block.type == "thinking":
+            result["thinking"] = block.thinking
+        elif block.type == "text":
+            result["response"] = block.text
+    
+    return result
+```
+
+---
+
+## 4. XML Tag Conventions
+
+### Structured Prompts for RAG
+Claude responds well to XML-structured prompts:
+```python
+prompt = """
+<context>
+You are analyzing research documents for entity extraction.
+</context>
+
+<task>
+Extract key entities and their relationships from the following text.
+</task>
+
+<document>
+{document_content}
+</document>
+
+<output_format>
+Provide your analysis in JSON format with keys: entities, relationships
+</output_format>
+"""
+```
+
+---
+
+## 5. Error Handling
+
+### Anthropic-Specific Exceptions
+```python
+from anthropic import (
+    APIError,
+    APIConnectionError,
+    RateLimitError,
+    APIStatusError,
+    AuthenticationError
+)
+
+def call_claude_with_retry(func, max_retries: int = 3):
+    """Call Claude with retry logic for common errors."""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except RateLimitError:
+            wait = 2 ** attempt
+            print(f"[WARN] Rate limited, waiting {wait}s...")
+            time.sleep(wait)
+        except APIConnectionError:
+            print(f"[WARN] Connection error, attempt {attempt + 1}/{max_retries}")
+            time.sleep(1)
+        except AuthenticationError as e:
+            print(f"[ERROR] Authentication failed: {e}")
+            raise
+        except APIStatusError as e:
+            if e.status_code >= 500:
+                print(f"[WARN] Server error {e.status_code}, retrying...")
+                time.sleep(2 ** attempt)
+            else:
+                raise
+    
+    raise Exception("All retry attempts failed")
+```
+
+---
+
+## 6. Quick Reference
+
+### Environment Variable
+```
+ANTHROPIC_API_KEY=your_api_key_here
+```
+
+### Minimal Working Example
+```python
+import os
+import anthropic
+
+client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+response = client.messages.create(
+    model="claude-sonnet-4-20250514",
+    max_tokens=1024,
+    messages=[
+        {"role": "user", "content": "Summarize this research paper..."}
+    ]
+)
+
+print(response.content[0].text)
+```

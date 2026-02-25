@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "naming": { "project": "lowercase-kebab-case" },
+  "scopeBoundaries": "root-global, subproject-local",
+  "notes": "Project-level conventions for DevFlywheel tooling."
+}

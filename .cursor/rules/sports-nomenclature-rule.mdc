@@ -1,0 +1,62 @@
+---
+name: sports-nomenclature-rule
+description: Standards for sports terminology disambiguation and team naming conventions
+---
+
+# Sports Nomenclature Rules
+
+## 1. Football Disambiguation (CRITICAL)
+
+**The term "Football" is AMBIGUOUS and MUST NOT be used alone.**
+
+| Input Term | Canonical Sport | Examples |
+|------------|-----------------|----------|
+| Football | **AMBIGUOUS - DO NOT USE** | - |
+| Soccer | Soccer | Premier League, MLS, La Liga |
+| Association Football | Soccer | FIFA, UEFA competitions |
+| American Football | American Football | NFL, NCAA, CFL |
+| Gridiron | American Football | XFL, USFL |
+
+### Rules
+- NEVER use standalone "Football" in code, comments, database fields, or data structures
+- ALWAYS map league names to explicit sport types before processing
+- When source data is ambiguous, check secondary features (pitch dimensions, quarters vs halves)
+
+---
+
+## 2. League-to-Sport Mapping
+
+### American Football Leagues
+- NFL, NCAA (FBS/FCS), CFL, XFL, USFL, Arena Football
+
+### Soccer Leagues
+- Premier League, MLS, La Liga, Bundesliga, Serie A, Ligue 1, Eredivisie, Liga MX
+
+---
+
+## 3. Team Name Conventions
+
+### Naming Hierarchy
+| Priority | Type | Example |
+|----------|------|---------|
+| Primary | Canonical full name | "UCLA Bruins", "Alabama Crimson Tide" |
+| Secondary | Short name / Alias | "UCLA", "Alabama", "Bama", "Roll Tide" |
+
+### Rules
+- Store and display **canonical names** as the primary identifier
+- Allow short names and aliases for search and user input
+- Use case-insensitive matching for duplicate detection
+- Strip athletic suffixes ("Bruins", "Tigers", etc.) when checking for duplicates
+
+---
+
+## 4. Quick Reference
+
+```python
+# Correct usage
+sport = "American Football"  # NFL game
+sport = "Soccer"             # Premier League match
+
+# INCORRECT - Never do this
+sport = "Football"  # Ambiguous!
+```

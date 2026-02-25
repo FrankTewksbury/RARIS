@@ -1,0 +1,25 @@
+---
+name: print-header-style
+description: Rule providing guidance on header separation format in log and md file output requests in prompts
+---
+
+# Overview
+
+Log and Console output sections should be separated clearly in the following format
+All HEADERS should be bold
+MAJOR HEADERS BLUE
+MINOR HEADERS GREEN
+
+<Major Headers>
+============================================
+     HEADER or TITLE
+============================================
+
+</Major Headers>
+
+<Minor Headers>
+--------------------------------------------
+     MINOR HEADER or TITLE
+--------------------------------------------
+
+</Minor Headers>

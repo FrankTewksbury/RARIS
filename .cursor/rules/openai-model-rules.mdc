@@ -1,0 +1,158 @@
+---
+name: openai-model-rules
+description: GPT-5.2 Series Implementation Patterns for Research Graph RAG
+---
+
+# OpenAI Model Rules
+# GPT-5.2 Series Implementation Patterns
+
+---
+
+## 1. Model Selection
+
+### Available Models (GPT-5.2 Series)
+| Model ID | Type | Use Case | Context Window |
+|----------|------|----------|----------------|
+| `gpt-5.2-pro` | Chat | **DEFAULT** - Most advanced, critical accuracy | 200K tokens |
+| `gpt-5.2` | Thinking | Complex reasoning, coding, summarization | 200K tokens |
+| `gpt-5.2-chat-latest` | Instant | Fast everyday tasks, writing | 200K tokens |
+| `gpt-5.2-codex` | Code | Software engineering, refactors | 200K tokens |
+
+### Task-Based Selection for Research Graph RAG
+| Task Type | Model | Notes |
+|-----------|-------|-------|
+| Default / General | `gpt-5.2-pro` | Best accuracy and precision |
+| Simple queries | `gpt-5.2-chat-latest` | Fast, cost-effective |
+| Complex reasoning | `gpt-5.2` | Multi-step thinking |
+| Code generation | `gpt-5.2-codex` | Optimized for engineering |
+
+### Deprecated Models - DO NOT USE
+- `gpt-4` → Use `gpt-5.2-pro`
+- `gpt-4o` → Use `gpt-5.2-pro`
+- `gpt-4o-mini` → Use `gpt-5.2-chat-latest`
+- `gpt-3.5-turbo` → Use `gpt-5.2-chat-latest`
+
+---
+
+## 2. API Implementation (Python)
+
+### Client Initialization
+```python
+from openai import OpenAI
+import os
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+```
+
+### Basic Chat Request Pattern
+```python
+def call_gpt(
+    prompt: str,
+    model: str = "gpt-5.2-pro",
+    system_prompt: str = None,
+    max_tokens: int = 4096,
+    temperature: float = 0.7
+) -> str:
+    """Make a request to OpenAI Chat API."""
+    print(f"[INFO] Initializing OpenAI Model: {model}")
+    
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
+    response = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature
+    )
+    return response.choices[0].message.content
+```
+
+---
+
+## 3. JSON Mode & Structured Outputs
+
+### JSON Mode
+```python
+response = client.chat.completions.create(
+    model="gpt-5.2-pro",
+    messages=[
+        {"role": "system", "content": "Extract entities and return as JSON."},
+        {"role": "user", "content": document_text}
+    ],
+    response_format={"type": "json_object"}
+)
+```
+
+---
+
+## 4. Error Handling
+
+### OpenAI-Specific Exceptions
+```python
+from openai import (
+    APIError,
+    APIConnectionError,
+    RateLimitError,
+    APIStatusError,
+    AuthenticationError,
+    BadRequestError
+)
+
+def call_gpt_with_retry(func, max_retries: int = 3):
+    """Call GPT with retry logic for common errors."""
+    import time
+    
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except RateLimitError:
+            wait = 2 ** attempt
+            print(f"[WARN] Rate limited, waiting {wait}s...")
+            time.sleep(wait)
+        except APIConnectionError:
+            print(f"[WARN] Connection error, attempt {attempt + 1}/{max_retries}")
+            time.sleep(1)
+        except AuthenticationError as e:
+            print(f"[ERROR] Authentication failed: {e}")
+            raise
+        except BadRequestError as e:
+            print(f"[ERROR] Bad request: {e}")
+            raise
+        except APIStatusError as e:
+            if e.status_code >= 500:
+                print(f"[WARN] Server error {e.status_code}, retrying...")
+                time.sleep(2 ** attempt)
+            else:
+                raise
+    
+    raise Exception("All retry attempts failed")
+```
+
+---
+
+## 5. Quick Reference
+
+### Environment Variable
+```
+OPENAI_API_KEY=your_api_key_here
+```
+
+### Minimal Working Example
+```python
+import os
+from openai import OpenAI
+
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+response = client.chat.completions.create(
+    model="gpt-5.2-pro",
+    messages=[
+        {"role": "user", "content": "Analyze this document..."}
+    ]
+)
+
+print(response.choices[0].message.content)
+```
