@@ -1,0 +1,66 @@
+# Ground truth fixture for Insurance domain evaluation.
+# Used by test harness to measure manifest accuracy and source recall.
+
+domain: "US Insurance Regulation"
+
+regulatory_bodies:
+  - id: naic
+    name: National Association of Insurance Commissioners
+    jurisdiction: federal
+    authority_type: sro
+
+  - id: cms
+    name: Centers for Medicare & Medicaid Services
+    jurisdiction: federal
+    authority_type: regulator
+
+  - id: hhs
+    name: Department of Health and Human Services
+    jurisdiction: federal
+    authority_type: regulator
+
+  - id: dol
+    name: Department of Labor
+    jurisdiction: federal
+    authority_type: regulator
+
+  - id: fio
+    name: Federal Insurance Office
+    jurisdiction: federal
+    authority_type: regulator
+
+sources:
+  - id: src-001
+    name: McCarran-Ferguson Act
+    regulatory_body: congress
+    type: statute
+    authority: binding
+    jurisdiction: federal
+
+  - id: src-002
+    name: Affordable Care Act - Insurance Provisions
+    regulatory_body: hhs
+    type: statute
+    authority: binding
+    jurisdiction: federal
+
+  - id: src-003
+    name: ERISA
+    regulatory_body: dol
+    type: statute
+    authority: binding
+    jurisdiction: federal
+
+  - id: src-004
+    name: NAIC Model Laws
+    regulatory_body: naic
+    type: guidance
+    authority: advisory
+    jurisdiction: federal
+
+  - id: src-005
+    name: NAIC Insurance Regulatory Information System (IRIS) Ratios
+    regulatory_body: naic
+    type: standard
+    authority: advisory
+    jurisdiction: federal
