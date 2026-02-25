@@ -11,13 +11,12 @@ tags: [raris, architecture]
 
 ## Overview
 
-RARIS is a full-stack application built as a set of containerized services orchestrated
-via Docker Compose. The system follows a pipeline architecture: AI agents discover
-regulatory domains and produce structured manifests, which drive automated data acquisition,
-ingestion, curation, and retrieval.
+RARIS is a full-stack pipeline: AI agents discover regulatory domains → produce manifests
+→ drive data acquisition → ingestion → retrieval. LLM provider is swappable at runtime
+via `LLM_PROVIDER` env var.
 
-The LLM provider is abstracted behind a configurable interface, allowing runtime switching
-between OpenAI, Anthropic, and Gemini via the `LLM_PROVIDER` environment variable.
+**Dev environment:** Hybrid — Docker Compose for infrastructure (PostgreSQL, Redis),
+backend and frontend run natively for fast iteration.
 
 ## Data Flow
 
@@ -60,7 +59,7 @@ flowchart TD
 | **Job Queue** | Redis 7 | Lightweight pub/sub and job queue for acquisition orchestration |
 | **LLM** | Configurable (`openai` \| `anthropic` \| `gemini`) | Provider flexibility, cost optimization, capability comparison |
 | **Web Scraping** | Firecrawl + Crawlee | Firecrawl for JS-rendered pages, Crawlee for static multi-page crawls |
-| **Containerization** | Docker Compose | Single-command dev environment, service isolation |
+| **Infrastructure** | Docker Compose | PostgreSQL + Redis containers; backend/frontend run natively |
 | **CI/CD** | GitHub Actions | PR gate (lint + test + build), branch protection |
 
 ## Service Boundaries
@@ -130,21 +129,11 @@ providers: dict[str, type[LLMProvider]] = {
    each source to the appropriate adapter (scrape, download, API, manual) via Redis job queue
 6. **Staging** — Acquired content is stored in the Raw Staging Layer with full provenance metadata
 
-## Docker Compose Service Map
+## Dev Environment (Hybrid)
 
+**Docker Compose** — infrastructure only:
 ```yaml
 services:
-  backend:
-    build: ./backend
-    ports: ["8000:8000"]
-    depends_on: [db, redis]
-    env_file: .env
-
-  frontend:
-    build: ./frontend
-    ports: ["5173:5173"]
-    depends_on: [backend]
-
   db:
     image: postgres:16
     ports: ["5432:5432"]
@@ -153,14 +142,16 @@ services:
       POSTGRES_DB: raris
       POSTGRES_USER: raris
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
   redis:
     image: redis:7
     ports: ["6379:6379"]
-
 volumes:
   pgdata:
 ```
+
+**Native services:**
+- Backend: `uv run uvicorn backend.app.main:app --reload --port 8000`
+- Frontend: `cd frontend && npm run dev` (Vite on port 5173)
 
 ## GitHub Actions Pipeline
 
