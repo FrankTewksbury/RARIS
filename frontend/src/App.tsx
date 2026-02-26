@@ -3,6 +3,7 @@ import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
 import { Dashboard } from "./pages/Dashboard";
 import { AcquisitionMonitor } from "./pages/AcquisitionMonitor";
 import { CurationDashboard } from "./pages/CurationDashboard";
+import { QueryInterface } from "./pages/QueryInterface";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -19,11 +20,13 @@ function App() {
           <NavLink to="/" end>Discovery</NavLink>
           <NavLink to="/acquisition">Acquisition</NavLink>
           <NavLink to="/curation">Curation</NavLink>
+          <NavLink to="/query">Query</NavLink>
         </nav>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/acquisition" element={<AcquisitionMonitor />} />
           <Route path="/curation" element={<CurationDashboard />} />
+          <Route path="/query" element={<QueryInterface />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

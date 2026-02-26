@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-large"
     embedding_dimensions: int = 3072
 
+    # Retrieval
+    rerank_method: str = "llm"  # llm | none
+    search_top_k: int = 20
+    rrf_k: int = 60
+
     # Ingestion
     chunk_min_tokens: int = 500
     chunk_max_tokens: int = 1000

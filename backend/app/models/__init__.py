@@ -7,9 +7,11 @@ from app.models.ingestion import (
     InternalDocument,
 )
 from app.models.manifest import CoverageAssessment, KnownGap, Manifest, RegulatoryBody, Source
+from app.models.retrieval import AnalysisRecord, QueryRecord
 
 __all__ = [
     "Manifest", "Source", "RegulatoryBody", "CoverageAssessment", "KnownGap",
     "AcquisitionRun", "AcquisitionSource", "StagedDocument",
     "IngestionRun", "InternalDocument", "DocumentSection", "DocumentTable", "Chunk",
+    "QueryRecord", "AnalysisRecord",
 ]
