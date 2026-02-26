@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.acquisition.api_adapter import fetch_api_source
 from app.acquisition.downloader import download_source
 from app.acquisition.scraper import scrape_source
 from app.models.acquisition import (
@@ -142,11 +143,11 @@ class AcquisitionOrchestrator:
                         url=source.url,
                     )
                 elif source.access_method == "api":
-                    # API adapter stub — not implemented in Phase 2
-                    source.status = SourceAcqStatus.skipped
-                    source.error_message = "API adapter not implemented (Phase 3)"
-                    await self.db.commit()
-                    return False
+                    result = await fetch_api_source(
+                        manifest_id=source.manifest_id,
+                        source_id=source.source_id,
+                        url=source.url,
+                    )
                 else:
                     source.status = SourceAcqStatus.skipped
                     await self.db.commit()

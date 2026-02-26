@@ -3,9 +3,10 @@
 Phase 1: Manifest Accuracy (≥95%), Source Recall (≥90%)
 Phase 2: Scrape Completion (≥90%)
 Phase 3: Ingestion Success (≥95%)
-Phase 4: Retrieval Precision@k (TBD)
+Phase 4: Retrieval Precision@k (≥80%), NDCG@k
 """
 
+import math
 from dataclasses import dataclass
 
 
@@ -63,3 +64,49 @@ def ingestion_success(ingested: int, total: int) -> MetricResult:
     target = 0.95
     rate = ingested / total if total > 0 else 0.0
     return MetricResult("Ingestion Success", rate, target, rate >= target)
+
+
+def precision_at_k(
+    ranked_ids: list[str], relevant_ids: set[str], k: int = 10
+) -> MetricResult:
+    """Phase 4: fraction of top-k results that are relevant.
+
+    Args:
+        ranked_ids: Ordered list of chunk/document IDs from retrieval.
+        relevant_ids: Set of IDs known to be relevant (ground truth).
+        k: Cutoff rank.
+    """
+    target = 0.80
+    if not ranked_ids or not relevant_ids:
+        return MetricResult(f"Precision@{k}", 0.0, target, False)
+
+    top_k = ranked_ids[:k]
+    relevant_in_top_k = sum(1 for rid in top_k if rid in relevant_ids)
+    precision = relevant_in_top_k / len(top_k)
+    return MetricResult(f"Precision@{k}", precision, target, precision >= target)
+
+
+def ndcg_at_k(
+    ranked_ids: list[str], relevant_ids: set[str], k: int = 10
+) -> MetricResult:
+    """Phase 4: Normalized Discounted Cumulative Gain at k.
+
+    Binary relevance: 1 if in relevant_ids, 0 otherwise.
+    """
+    target = 0.70
+
+    if not ranked_ids or not relevant_ids:
+        return MetricResult(f"NDCG@{k}", 0.0, target, False)
+
+    # DCG
+    dcg = 0.0
+    for i, rid in enumerate(ranked_ids[:k]):
+        rel = 1.0 if rid in relevant_ids else 0.0
+        dcg += rel / math.log2(i + 2)  # i+2 because rank starts at 1
+
+    # Ideal DCG — all relevant items at top
+    ideal_count = min(len(relevant_ids), k)
+    idcg = sum(1.0 / math.log2(i + 2) for i in range(ideal_count))
+
+    ndcg = dcg / idcg if idcg > 0 else 0.0
+    return MetricResult(f"NDCG@{k}", ndcg, target, ndcg >= target)

@@ -1,0 +1,31 @@
+# Production overrides — use with: docker compose -f docker-compose.yml -f docker-compose.prod.yml up
+#
+# Changes from base:
+# - DB and Redis ports NOT exposed to host
+# - Auth enabled by default
+# - Backend runs with multiple workers
+# - Scheduler enabled for background monitoring
+
+services:
+  db:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  backend:
+    environment:
+      AUTH_ENABLED: "true"
+      SCHEDULER_ENABLED: "true"
+      LOG_LEVEL: "WARNING"
+    command:
+      - uv
+      - run
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "4"
