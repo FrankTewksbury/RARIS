@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     chunk_max_tokens: int = 1000
     chunk_overlap_tokens: int = 50
 
+    # Rate limiting
+    rate_limit_rpm: int = 60  # Requests per minute (0 = disabled)
+
     # Auth
     auth_enabled: bool = False  # Set True to require API keys
 
