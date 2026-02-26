@@ -16,5 +16,14 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
 
+    # Embeddings
+    embedding_model: str = "text-embedding-3-large"
+    embedding_dimensions: int = 3072
+
+    # Ingestion
+    chunk_min_tokens: int = 500
+    chunk_max_tokens: int = 1000
+    chunk_overlap_tokens: int = 50
+
 
 settings = Settings()

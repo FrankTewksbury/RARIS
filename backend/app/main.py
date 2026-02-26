@@ -2,15 +2,17 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.database import Base, engine
-from app.routers import acquisitions, health, manifests
+from app.routers import acquisitions, health, ingestion, manifests
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Create tables on startup (use Alembic migrations in production)
+    # Create pgvector extension and tables on startup
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
         await conn.run_sync(Base.metadata.create_all)
     yield
     await engine.dispose()
@@ -34,3 +36,4 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(manifests.router)
 app.include_router(acquisitions.router)
+app.include_router(ingestion.router)
