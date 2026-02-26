@@ -8,3 +8,12 @@
 - Phase 0 is next execution target
 - Hybrid dev environment: Docker for db + redis only, backend/frontend run natively (faster iteration on Windows)
 - Documentation minify standard: keep specs lean, no prose bloat
+- In-memory asyncio.Queue for SSE event streaming (swap to Redis pub/sub for prod)
+- Firecrawl optional with httpx static fallback — avoids hard dependency on paid API
+- SHA-256 content hashing for staging dedup
+- Phase 3 spec: section-based semantic chunking (preserves regulatory hierarchy)
+- Phase 3 spec: pgvector + tsvector hybrid index in single PostgreSQL instance
+- Phase 4 spec: 4 depth levels (Quick Check → Exhaustive) mapping to real compliance use cases
+- Phase 4 spec: RRF (Reciprocal Rank Fusion) for combining dense + sparse search
+- Phase 5 spec: YAML-based vertical config for domain onboarding
+- Phase 6 spec: feedback-to-source tracer with auto confidence adjustment
