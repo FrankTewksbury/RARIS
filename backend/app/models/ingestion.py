@@ -2,7 +2,7 @@ import enum
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import DateTime, Float, Integer, String, Text, func
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -54,7 +54,7 @@ class InternalDocument(Base):
     __tablename__ = "internal_documents"
 
     id: Mapped[str] = mapped_column(String(150), primary_key=True)
-    ingestion_run_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    ingestion_run_id: Mapped[str] = mapped_column(ForeignKey("ingestion_runs.id"), nullable=False)
     manifest_id: Mapped[str] = mapped_column(String(100), nullable=False)
     source_id: Mapped[str] = mapped_column(String(100), nullable=False)
     staged_document_id: Mapped[str] = mapped_column(String(100), nullable=False)
@@ -108,7 +108,7 @@ class DocumentSection(Base):
     __tablename__ = "document_sections"
 
     id: Mapped[str] = mapped_column(String(150), primary_key=True)
-    document_id: Mapped[str] = mapped_column(String(150), nullable=False)
+    document_id: Mapped[str] = mapped_column(ForeignKey("internal_documents.id"), nullable=False)
     parent_id: Mapped[str | None] = mapped_column(String(150), nullable=True)
     heading: Mapped[str] = mapped_column(Text, default="")
     level: Mapped[int] = mapped_column(Integer, default=1)
@@ -122,7 +122,7 @@ class DocumentTable(Base):
     __tablename__ = "document_tables"
 
     id: Mapped[str] = mapped_column(String(150), primary_key=True)
-    document_id: Mapped[str] = mapped_column(String(150), nullable=False)
+    document_id: Mapped[str] = mapped_column(ForeignKey("internal_documents.id"), nullable=False)
     section_id: Mapped[str | None] = mapped_column(String(150), nullable=True)
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
     headers: Mapped[list | None] = mapped_column(JSONB, default=list)
@@ -135,7 +135,7 @@ class Chunk(Base):
     __tablename__ = "chunks"
 
     id: Mapped[str] = mapped_column(String(200), primary_key=True)
-    document_id: Mapped[str] = mapped_column(String(150), nullable=False)
+    document_id: Mapped[str] = mapped_column(ForeignKey("internal_documents.id"), nullable=False)
     section_id: Mapped[str] = mapped_column(String(150), default="")
     section_path: Mapped[str] = mapped_column(Text, default="")
     text: Mapped[str] = mapped_column(Text, nullable=False)

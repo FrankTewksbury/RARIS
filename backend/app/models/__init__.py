@@ -8,10 +8,12 @@ from app.models.ingestion import (
 )
 from app.models.manifest import CoverageAssessment, KnownGap, Manifest, RegulatoryBody, Source
 from app.models.retrieval import AnalysisRecord, QueryRecord
+from app.models.vertical import Vertical
 
 __all__ = [
     "Manifest", "Source", "RegulatoryBody", "CoverageAssessment", "KnownGap",
     "AcquisitionRun", "AcquisitionSource", "StagedDocument",
     "IngestionRun", "InternalDocument", "DocumentSection", "DocumentTable", "Chunk",
     "QueryRecord", "AnalysisRecord",
+    "Vertical",
 ]
