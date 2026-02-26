@@ -12,6 +12,7 @@ from app.middleware import RequestLoggingMiddleware
 from app.routers import (
     acquisitions,
     admin,
+    export,
     feedback,
     health,
     ingestion,
@@ -77,5 +78,6 @@ app.include_router(retrieval.router)
 app.include_router(verticals.router)
 app.include_router(feedback.router)
 app.include_router(admin.router)
+app.include_router(export.router)
 
 register_error_handlers(app)

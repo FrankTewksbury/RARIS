@@ -1,13 +1,37 @@
 """Web Scraping Engine — Firecrawl for JS-rendered, httpx+BeautifulSoup for static."""
 
+import asyncio
 import logging
 import time
+from urllib.parse import urlparse
 
 import httpx
 
 from app.acquisition.staging import stage_document
 
 logger = logging.getLogger(__name__)
+
+# Per-domain last-request timestamps for rate limiting
+_domain_last_request: dict[str, float] = {}
+
+
+async def _enforce_rate_limit(url: str, rate_limit_ms: int) -> None:
+    """Wait if needed to enforce minimum delay between requests to the same domain."""
+    if rate_limit_ms <= 0:
+        return
+
+    domain = urlparse(url).netloc
+    now = time.monotonic()
+    last = _domain_last_request.get(domain, 0.0)
+    delay_s = rate_limit_ms / 1000.0
+    elapsed = now - last
+
+    if elapsed < delay_s:
+        wait = delay_s - elapsed
+        logger.debug("Rate limit: waiting %.1fs before requesting %s", wait, domain)
+        await asyncio.sleep(wait)
+
+    _domain_last_request[domain] = time.monotonic()
 
 
 async def scrape_source(
@@ -24,6 +48,8 @@ async def scrape_source(
         tool: "firecrawl" for JS-rendered pages, "static" for simple HTTP fetch.
         rate_limit_ms: Minimum delay between requests to the same domain.
     """
+    await _enforce_rate_limit(url, rate_limit_ms)
+
     if tool == "firecrawl":
         return await _scrape_firecrawl(manifest_id, source_id, url)
     return await _scrape_static(manifest_id, source_id, url)

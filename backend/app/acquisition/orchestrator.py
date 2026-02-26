@@ -28,9 +28,10 @@ BACKOFF_BASE = 1  # seconds: 1, 4, 16
 class AcquisitionOrchestrator:
     """Coordinates acquisition of all sources from an approved manifest."""
 
-    def __init__(self, db: AsyncSession, acquisition_id: str):
+    def __init__(self, db: AsyncSession, acquisition_id: str, rate_limit_ms: int = 2000):
         self.db = db
         self.acquisition_id = acquisition_id
+        self.rate_limit_ms = rate_limit_ms
 
     async def run(self) -> AsyncGenerator[dict, None]:
         """Execute acquisition for all sources, yielding SSE events."""
@@ -132,6 +133,7 @@ class AcquisitionOrchestrator:
                         manifest_id=source.manifest_id,
                         source_id=source.source_id,
                         url=source.url,
+                        rate_limit_ms=self.rate_limit_ms,
                     )
                 elif source.access_method == "download":
                     result = await download_source(

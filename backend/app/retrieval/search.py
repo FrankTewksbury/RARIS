@@ -228,7 +228,14 @@ def _build_filter_clause(
 
 
 async def _embed_query(query: str) -> list[float] | None:
-    """Generate embedding for a search query."""
+    """Generate embedding for a search query, with Redis caching."""
+    from app.embedding_cache import get_cached_embedding, set_cached_embedding
+
+    # Check cache first
+    cached = await get_cached_embedding(query)
+    if cached:
+        return cached
+
     try:
         client = AsyncOpenAI(api_key=settings.openai_api_key)
         response = await client.embeddings.create(
@@ -236,7 +243,9 @@ async def _embed_query(query: str) -> list[float] | None:
             input=query,
             dimensions=settings.embedding_dimensions,
         )
-        return response.data[0].embedding
+        embedding = response.data[0].embedding
+        await set_cached_embedding(query, embedding)
+        return embedding
     except Exception:
         logger.exception("Failed to embed query")
         return None
