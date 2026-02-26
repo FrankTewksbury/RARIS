@@ -5,6 +5,7 @@ import { AcquisitionMonitor } from "./pages/AcquisitionMonitor";
 import { CurationDashboard } from "./pages/CurationDashboard";
 import { QueryInterface } from "./pages/QueryInterface";
 import { VerticalOnboarding } from "./pages/VerticalOnboarding";
+import { AccuracyDashboard } from "./pages/AccuracyDashboard";
 import "./App.css";
 
 const queryClient = new QueryClient({
@@ -23,6 +24,7 @@ function App() {
           <NavLink to="/curation">Curation</NavLink>
           <NavLink to="/query">Query</NavLink>
           <NavLink to="/verticals">Verticals</NavLink>
+          <NavLink to="/accuracy">Accuracy</NavLink>
         </nav>
         <Routes>
           <Route path="/" element={<Dashboard />} />
@@ -30,6 +32,7 @@ function App() {
           <Route path="/curation" element={<CurationDashboard />} />
           <Route path="/query" element={<QueryInterface />} />
           <Route path="/verticals" element={<VerticalOnboarding />} />
+          <Route path="/accuracy" element={<AccuracyDashboard />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

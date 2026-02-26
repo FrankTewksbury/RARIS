@@ -1,4 +1,10 @@
 from app.models.acquisition import AcquisitionRun, AcquisitionSource, StagedDocument
+from app.models.feedback import (
+    AccuracySnapshot,
+    ChangeEvent,
+    CurationQueueItem,
+    ResponseFeedback,
+)
 from app.models.ingestion import (
     Chunk,
     DocumentSection,
@@ -16,4 +22,5 @@ __all__ = [
     "IngestionRun", "InternalDocument", "DocumentSection", "DocumentTable", "Chunk",
     "QueryRecord", "AnalysisRecord",
     "Vertical",
+    "ResponseFeedback", "CurationQueueItem", "ChangeEvent", "AccuracySnapshot",
 ]
