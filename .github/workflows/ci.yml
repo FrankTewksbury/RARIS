@@ -25,6 +25,18 @@ jobs:
       - run: cd frontend && npm ci
       - run: cd frontend && npm run lint
 
+  typecheck-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: cd frontend && npm ci
+      - run: cd frontend && npx tsc --noEmit
+
   test-backend:
     runs-on: ubuntu-latest
     steps:
@@ -56,3 +68,10 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: cd frontend && npm ci
       - run: cd frontend && npm run build
+
+  build-docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t raris-backend ./backend
+      - run: docker build -t raris-frontend ./frontend

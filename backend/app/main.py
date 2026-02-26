@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.database import Base, engine
+from app.errors import register_error_handlers
 from app.routers import acquisitions, feedback, health, ingestion, manifests, retrieval, verticals
 
 
@@ -40,3 +41,5 @@ app.include_router(ingestion.router)
 app.include_router(retrieval.router)
 app.include_router(verticals.router)
 app.include_router(feedback.router)
+
+register_error_handlers(app)
