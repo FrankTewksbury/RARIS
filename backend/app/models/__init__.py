@@ -1,4 +1,5 @@
 from app.models.acquisition import AcquisitionRun, AcquisitionSource, StagedDocument
+from app.models.auth import ApiKey
 from app.models.feedback import (
     AccuracySnapshot,
     ChangeEvent,
@@ -23,4 +24,5 @@ __all__ = [
     "QueryRecord", "AnalysisRecord",
     "Vertical",
     "ResponseFeedback", "CurationQueueItem", "ChangeEvent", "AccuracySnapshot",
+    "ApiKey",
 ]
