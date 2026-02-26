@@ -110,7 +110,9 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
 
 async def list_manifests(db: AsyncSession) -> list[ManifestSummary]:
     result = await db.execute(
-        select(Manifest).order_by(Manifest.created_at.desc())
+        select(Manifest)
+        .options(selectinload(Manifest.sources))
+        .order_by(Manifest.created_at.desc())
     )
     manifests = result.scalars().all()
     return [

@@ -17,3 +17,11 @@
 - Phase 4 spec: RRF (Reciprocal Rank Fusion) for combining dense + sparse search
 - Phase 5 spec: YAML-based vertical config for domain onboarding
 - Phase 6 spec: feedback-to-source tracer with auto confidence adjustment
+
+## 2026-02-26
+- Removed apt-get from backend Dockerfile — all Python deps ship manylinux wheels; eliminates Docker buildkit DNS flakiness on Windows
+- Added selectinload to all async manifest queries — lazy-loading throws MissingGreenlet under asyncpg (SQLite tests don't catch this)
+- Discovery agent batches source hunter in groups of 10 bodies — single call exceeded output token limits with 50+ bodies
+- Landscape mapper prompt rewritten to demand exhaustive enumeration — "group as pattern" instruction was causing 5-state results
+- OpenAI provider must forward max_tokens kwarg — was silently ignored, causing truncated responses
+- Dashboard switched from single-column to sidebar+main grid — auto-displays results after SSE completion

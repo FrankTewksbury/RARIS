@@ -32,6 +32,9 @@ from app.models.manifest import (
 
 logger = logging.getLogger(__name__)
 
+# Max bodies per source-hunter batch to stay within output token limits
+SOURCE_HUNTER_BATCH_SIZE = 10
+
 
 def _extract_json(text: str) -> dict:
     """Extract JSON from LLM response, handling markdown code blocks."""
@@ -73,6 +76,7 @@ class DomainDiscoveryAgent:
 
         yield {"event": "step", "data": {
             "step": "landscape_mapper", "status": "complete",
+            "message": f"Found {len(bodies)} regulatory bodies.",
             "bodies_found": len(bodies),
         }}
 
@@ -94,27 +98,50 @@ class DomainDiscoveryAgent:
         manifest.jurisdiction_hierarchy = landscape.get("jurisdiction_hierarchy")
         await self.db.flush()
 
-        # Step 2: Source Hunter
+        # Step 2: Source Hunter — batched to handle large body counts
         yield {"event": "step", "data": {
             "step": "source_hunter", "status": "running",
-            "message": f"Discovering sources for {len(bodies)} regulatory bodies...",
+            "message": f"Discovering sources for {len(bodies)} regulatory bodies (batched)...",
         }}
 
-        sources_data = await self._source_hunter(bodies)
-        sources = sources_data.get("sources", [])
+        all_sources = []
+        source_id_counter = 1
+        batches = [
+            bodies[i:i + SOURCE_HUNTER_BATCH_SIZE]
+            for i in range(0, len(bodies), SOURCE_HUNTER_BATCH_SIZE)
+        ]
+
+        for batch_idx, batch in enumerate(batches):
+            yield {"event": "progress", "data": {
+                "sources_found": len(all_sources),
+                "bodies_processed": batch_idx * SOURCE_HUNTER_BATCH_SIZE,
+                "total_bodies": len(bodies),
+                "message": f"Batch {batch_idx + 1}/{len(batches)}: processing {len(batch)} bodies...",
+            }}
+
+            batch_sources = await self._source_hunter(batch, start_id=source_id_counter)
+            new_sources = batch_sources.get("sources", [])
+
+            # Re-number source IDs to ensure global uniqueness
+            for src in new_sources:
+                src["id"] = f"src-{source_id_counter:03d}"
+                source_id_counter += 1
+
+            all_sources.extend(new_sources)
 
         yield {"event": "step", "data": {
             "step": "source_hunter", "status": "complete",
-            "sources_found": len(sources),
+            "message": f"Found {len(all_sources)} sources across {len(batches)} batches.",
+            "sources_found": len(all_sources),
         }}
         yield {"event": "progress", "data": {
-            "sources_found": len(sources),
+            "sources_found": len(all_sources),
             "bodies_processed": len(bodies),
             "total_bodies": len(bodies),
         }}
 
         # Persist sources
-        for src_data in sources:
+        for src_data in all_sources:
             source = Source(
                 id=src_data["id"],
                 manifest_id=self.manifest_id,
@@ -144,11 +171,11 @@ class DomainDiscoveryAgent:
             "message": "Mapping cross-references and supersession chains...",
         }}
 
-        relationships = await self._relationship_mapper(sources)
+        relationships = await self._relationship_mapper(all_sources)
 
         # Update sources with relationships
         rel_map = relationships.get("relationships", {})
-        for src_data in sources:
+        for src_data in all_sources:
             src_id = src_data["id"]
             if src_id in rel_map:
                 src_data["relationships"] = rel_map[src_id]
@@ -164,11 +191,11 @@ class DomainDiscoveryAgent:
             "message": "Evaluating discovery completeness...",
         }}
 
-        jurisdiction_counts = Counter(s.get("jurisdiction", "") for s in sources)
-        type_counts = Counter(s.get("type", "") for s in sources)
+        jurisdiction_counts = Counter(s.get("jurisdiction", "") for s in all_sources)
+        type_counts = Counter(s.get("type", "") for s in all_sources)
 
         coverage = await self._coverage_assessor(
-            domain_description, len(bodies), len(sources),
+            domain_description, len(bodies), len(all_sources),
             dict(jurisdiction_counts), dict(type_counts),
         )
 
@@ -180,7 +207,7 @@ class DomainDiscoveryAgent:
         # Persist coverage assessment
         assessment = CoverageAssessment(
             manifest_id=self.manifest_id,
-            total_sources=len(sources),
+            total_sources=len(all_sources),
             by_jurisdiction=dict(jurisdiction_counts),
             by_type=dict(type_counts),
             completeness_score=coverage.get("completeness_score", 0.0),
@@ -212,7 +239,7 @@ class DomainDiscoveryAgent:
         }}
         yield {"event": "complete", "data": {
             "manifest_id": self.manifest_id,
-            "total_sources": len(sources),
+            "total_sources": len(all_sources),
             "coverage_score": coverage.get("completeness_score", 0.0),
         }}
 
@@ -221,16 +248,19 @@ class DomainDiscoveryAgent:
         response = await self.llm.complete([
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
-        ])
+        ], max_tokens=16384)
         return _extract_json(response)
 
-    async def _source_hunter(self, bodies: list[dict]) -> dict:
+    async def _source_hunter(self, bodies: list[dict], start_id: int = 1) -> dict:
         bodies_json = json.dumps(bodies, indent=2)
-        prompt = SOURCE_HUNTER_PROMPT.format(bodies_json=bodies_json)
+        prompt = SOURCE_HUNTER_PROMPT.format(
+            bodies_json=bodies_json,
+            start_id=start_id,
+        )
         response = await self.llm.complete([
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
-        ], max_tokens=8192)
+        ], max_tokens=16384)
         return _extract_json(response)
 
     async def _relationship_mapper(self, sources: list[dict]) -> dict:
@@ -245,7 +275,7 @@ class DomainDiscoveryAgent:
         response = await self.llm.complete([
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": prompt},
-        ])
+        ], max_tokens=8192)
         return _extract_json(response)
 
     async def _coverage_assessor(

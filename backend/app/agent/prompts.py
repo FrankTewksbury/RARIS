@@ -14,10 +14,20 @@ Important rules:
 - Be explicit about gaps — it's better to identify a gap than to fabricate a source
 """
 
-LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify all relevant
+LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify ALL relevant
 regulatory bodies organized by jurisdiction level.
 
 Domain: {domain_description}
+
+CRITICAL INSTRUCTIONS:
+- You MUST enumerate EVERY relevant body individually. Do NOT summarize or group them.
+- If the domain mentions "all states" or "all 50 states", you MUST list EVERY state's
+  regulatory body individually with its actual name, actual website URL, and jurisdiction.
+- Include all federal agencies, national associations, self-regulatory organizations,
+  and industry bodies relevant to this domain.
+- For each state, use the actual name of the department/division (e.g., "California
+  Department of Insurance", "Texas Department of Insurance", "New York Department of
+  Financial Services") — these vary by state.
 
 Return a JSON object with this structure:
 {{
@@ -38,10 +48,8 @@ Return a JSON object with this structure:
   }}
 }}
 
-Be comprehensive. Include federal agencies, national bodies (like NAIC for insurance),
-and state-level regulators. For state regulators, you may group them as a pattern
-(e.g., "Each state has a Department of Insurance") rather than listing all 50 individually,
-but include at least 5 specific examples with real URLs."""
+You MUST list every single body. Do not abbreviate, summarize, or use "etc."
+This is a compliance system — completeness is mandatory."""
 
 SOURCE_HUNTER_PROMPT = """For each of the following regulatory bodies, discover specific
 regulatory source documents — statutes, regulations, guidance documents, standards,
@@ -49,6 +57,9 @@ educational materials, and guides.
 
 Regulatory bodies:
 {bodies_json}
+
+For each body, find at least 1-3 key regulatory sources. For major federal agencies,
+find more (3-5). Focus on the most important, authoritative documents.
 
 For each source, provide:
 {{
@@ -72,6 +83,7 @@ For each source, provide:
 
 Return a JSON object: {{"sources": [...]}}
 
+Number source IDs sequentially starting from src-{start_id:03d}.
 Focus on finding real, accessible documents. Assign confidence based on how certain you are
 that the URL is valid and the document is current. Use needs_human_review: true for anything
 with confidence below 0.7."""

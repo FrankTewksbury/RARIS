@@ -38,14 +38,15 @@ async def generate_manifest(
     db: AsyncSession = Depends(get_db),
 ):
     # Generate manifest ID
+    domain = request.domain_description.strip()
     timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-    domain_slug = request.domain_description[:30].lower().replace(" ", "-")
+    domain_slug = domain[:30].lower().replace(" ", "-")
     manifest_id = f"raris-manifest-{domain_slug}-{timestamp}"
 
     # Create manifest record
     manifest = Manifest(
         id=manifest_id,
-        domain=request.domain_description,
+        domain=domain,
         status=ManifestStatus.generating,
         created_by="domain-discovery-agent-v1",
     )
@@ -57,7 +58,7 @@ async def generate_manifest(
 
     # Launch agent in background
     background_tasks.add_task(
-        _run_agent, manifest_id, request.domain_description, request.llm_provider
+        _run_agent, manifest_id, domain, request.llm_provider
     )
 
     return GenerateManifestResponse(

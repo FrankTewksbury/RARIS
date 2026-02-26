@@ -2,17 +2,12 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# System dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    && rm -rf /var/lib/apt/lists/*
-
 # Install uv for fast dependency management
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Copy dependency files first for layer caching
-COPY pyproject.toml ./
+# All deps ship manylinux wheels — no build-essential/libpq-dev needed
+COPY pyproject.toml uv.lock ./
 RUN uv sync --no-dev --no-install-project
 
 # Copy application code

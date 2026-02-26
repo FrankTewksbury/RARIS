@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { Citation } from "../../types/retrieval";
 
 interface Props {
@@ -18,7 +19,7 @@ function renderResponseWithCitations(
   citations: Citation[],
   onCitationClick: (citation: Citation) => void,
 ) {
-  const parts: (string | JSX.Element)[] = [];
+  const parts: (string | ReactNode)[] = [];
   let lastIndex = 0;
 
   for (const match of text.matchAll(CITATION_REGEX)) {

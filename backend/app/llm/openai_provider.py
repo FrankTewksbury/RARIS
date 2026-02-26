@@ -12,11 +12,14 @@ class OpenAIProvider(LLMProvider):
         self.model = model
 
     async def complete(self, messages: list[dict], **kwargs) -> str:
-        response = await self.client.chat.completions.create(
-            model=kwargs.get("model", self.model),
-            messages=messages,
-            temperature=kwargs.get("temperature", 0.2),
-        )
+        params = {
+            "model": kwargs.get("model", self.model),
+            "messages": messages,
+            "temperature": kwargs.get("temperature", 0.2),
+        }
+        if "max_tokens" in kwargs:
+            params["max_tokens"] = kwargs["max_tokens"]
+        response = await self.client.chat.completions.create(**params)
         return response.choices[0].message.content or ""
 
     async def stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
