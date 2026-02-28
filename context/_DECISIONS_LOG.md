@@ -25,3 +25,4 @@
 - Landscape mapper prompt rewritten to demand exhaustive enumeration — "group as pattern" instruction was causing 5-state results
 - OpenAI provider must forward max_tokens kwarg — was silently ignored, causing truncated responses
 - Dashboard switched from single-column to sidebar+main grid — auto-displays results after SSE completion
+- DFW process files synchronized to implementation state — roadmap updated to Phases 0-11 done snapshot and hardening backlog promoted to active

@@ -4,7 +4,7 @@ project: raris
 created: 2026-02-25
 sessionId: S20260225_0002
 source: cursor
-updated: 2026-02-25
+updated: 2026-02-26
 tags: [raris, roadmap]
 ---
 
@@ -14,110 +14,32 @@ tags: [raris, roadmap]
 
 ---
 
-## Phase 0: Project Foundation `#status/active`
+## Delivery Status Snapshot
 
-**Goal:** Scaffolding and governance layer — dev environment, CI/CD, evaluation framework.
-
-**React UI Deliverable:** None (infrastructure only). Verify with `docker compose up`.
-
-**Exit Criteria:**
-- [ ] `docker compose up` starts all 4 services (backend, frontend, db, redis) with no errors
-- [ ] CI pipeline runs on every PR and blocks merge on failure
-- [ ] Evaluation framework has defined metrics and test harness skeleton
-- [ ] Phase 1 spec reviewed and approved
-
----
-
-## Phase 1: Domain Discovery & Analysis `#status/backlog`
-
-**Goal:** AI agent maps regulatory domains and produces structured YAML manifests.
-
-**React UI Deliverable:** Manifest Review Dashboard — domain input, agent progress stream,
-source table with edit/approve/reject, coverage summary, manifest approval workflow.
-
-**Exit Criteria:**
-- [ ] Domain Discovery Agent accepts natural language domain description and produces valid YAML manifest
-- [ ] Manifest schema defined, documented, and has a working validator
-- [ ] Review UI allows full human approval workflow
-- [ ] Insurance domain manifest produced, reviewed, and approved
-- [ ] Phase 2 spec reviewed and approved
+| Phase | Name | Status | Commit |
+|------|------|--------|--------|
+| 0 | Project Foundation | `#status/done` | `a633159` |
+| 1 | Domain Discovery & Analysis | `#status/done` | `a633159` |
+| 2 | Data Acquisition Pipeline | `#status/done` | `b73d20c` |
+| 3 | Ingestion & Curation Engine | `#status/done` | `0975e8f` |
+| 4 | Retrieval & Agent Layer | `#status/done` | `7d40fee` |
+| 5 | Vertical Expansion & Onboarding | `#status/done` | `7dd3a8f` |
+| 6 | Feedback & Continuous Curation | `#status/done` | `2f04090` |
+| 7 | Production Readiness & Integration | `#status/done` | `cdc2b85` |
+| 8 | Auth, Scheduling & Observability | `#status/done` | `2c5597a` |
+| 9 | DB Migrations, Rate Limiting & Gaps | `#status/done` | `1682179` |
+| 10 | Scraper Rate, Export, Embedding Cache, FE Resilience | `#status/done` | `21445e9` |
+| 11 | Retrieval Quality, Docker Hardening & CI | `#status/done` | `df02b34` |
 
 ---
 
-## Phase 2: Data Acquisition `#status/backlog`
+## Current Wave — Hardening and Reliability `#status/active`
 
-**Goal:** Consume approved manifests and acquire actual regulatory content via scraping, download, and API adapters.
+**Goal:** Close post-implementation gaps surfaced by smoke tests and deep discovery runs.
 
-**React UI Deliverable:** Acquisition Monitor — run selector, per-source status table with
-color-coded badges, error log panel, retry button, raw content preview modal.
-
-**Exit Criteria:**
-- [ ] All acquisition adapters functional and tested against real sources
-- [ ] Insurance manifest sources successfully acquired and staged
-- [ ] Monitoring dashboard operational with SSE progress stream
-- [ ] Raw staging layer populated with validated content and provenance
-- [ ] Phase 3 spec reviewed and approved
-
----
-
-## Phase 3: Ingestion & Curation Engine `#status/backlog`
-
-**Goal:** Transform raw acquired content into structured, enriched, queryable knowledge.
-
-**React UI Deliverable:** Curation Dashboard — document status pipeline view, quality gate
-results, curation approval workflow, index health metrics.
-
-**Exit Criteria:**
-- [ ] All ingestion adapters (PDF, HTML, legal XML, guide, plaintext) implemented and tested
-- [ ] Curation pipeline enriches and validates documents end-to-end
-- [ ] Quality gates catch known failure modes
-- [ ] Semantic chunking preserves regulatory text integrity
-- [ ] Hybrid index supports retrieval queries
-- [ ] Insurance corpus fully ingested, curated, and indexed
-- [ ] Phase 4 spec reviewed and approved
-
----
-
-## Phase 4: Retrieval & Agent Layer `#status/backlog`
-
-**Goal:** Agent-based retrieval with tunable depth, citation provenance, and cross-corpus analysis.
-
-**React UI Deliverable:** Query Interface — natural language input, tunable depth selector,
-results with citation chains, cross-corpus comparison view, developer API docs.
-
-**Exit Criteria:**
-- [ ] Retrieval engine returns accurate results with measurable precision/recall
-- [ ] Agent produces tunable-depth responses with full citation chains
-- [ ] Cross-corpus analysis functional for document comparison
-- [ ] Developer API serves retrieval and analysis endpoints
-- [ ] Evaluation framework scores meet defined accuracy thresholds
-- [ ] Phase 5 spec reviewed and approved
-
----
-
-## Phase 5: Vertical Expansion & Packaging `#status/backlog`
-
-**Goal:** Onboard additional regulatory verticals and package the agent for specific use cases.
-
-**React UI Deliverable:** Vertical Onboarding Wizard — domain selector, pipeline progress
-tracker, packaged application launchers.
-
-**Exit Criteria:**
-- [ ] At least two additional verticals onboarded end-to-end
-- [ ] Packaged applications functional for defined use cases
-- [ ] Vertical onboarding playbook documented and validated
-
----
-
-## Phase 6: Feedback & Continuous Curation `#status/backlog`
-
-**Goal:** Closed-loop system for accuracy improvement — feedback capture, change monitoring, re-curation.
-
-**React UI Deliverable:** Accuracy Dashboard — feedback volume, resolution rate, accuracy
-trends, curation health metrics, regulatory change alerts.
-
-**Exit Criteria:**
-- [ ] Feedback from retrieval propagates back to curation with no manual intervention
-- [ ] Change monitoring detects real regulatory updates
-- [ ] Re-curation pipeline handles flagged and changed sources end-to-end
-- [ ] Accuracy trends measurable and visible
+**Hardening Priorities:**
+- [ ] Implement RSS + Federal Register monitoring alongside hash polling `#status/active #priority/critical #source/session`
+- [ ] Add embedding provider abstraction and registry-backed selection `#status/backlog #priority/critical #source/session`
+- [ ] Add batching to relationship mapper for deep manifests `#status/backlog #priority/critical #source/session`
+- [ ] Gate production startup on Alembic migration state and config validation `#status/backlog #priority/important #source/session`
+- [ ] Expand evaluation artifacts (insurance ground-truth set, precision@k regression checks) `#status/backlog #priority/important #source/session`

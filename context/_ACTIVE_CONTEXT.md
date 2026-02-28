@@ -1,7 +1,7 @@
 # Active Context
 
 - Updated: 2026-02-26
-- Current focus: Post-smoke-test — all containers healthy, discovery depth improved, remaining hardening
+- Current focus: DFW/process sync complete; execute hardening backlog (monitoring, embeddings, batching)
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
 
@@ -29,6 +29,7 @@
 - Overhauled discovery agent for full 50-state depth (batched source hunting)
 - Rebuilt Dashboard with sidebar layout + auto-display manifest results
 - Wrote Cursor handoff and session journal
+- Reconciled DFW process files to actual repo state (TODO, roadmap, README, active context)
 
 ## Test Counts
 
@@ -53,10 +54,9 @@
 ## What's Next — Remaining Gaps
 
 ### High Priority
-1. **Commit this session's changes** — 9 files modified, unstaged
-2. **RSS / Federal Register monitoring** — Change monitor only does hash-check; RSS and Federal Register API modeled but not implemented
-3. **Embedding provider abstraction** — Hardcoded to OpenAI; fails silently if only Anthropic/Gemini key set
-4. **Relationship mapper batching** — With 100+ sources, may exceed input token limits
+1. **RSS / Federal Register monitoring** — Change monitor only does hash-check; RSS and Federal Register API modeled but not implemented
+2. **Embedding provider abstraction** — Hardcoded to OpenAI; fails silently if only Anthropic/Gemini key set
+3. **Relationship mapper batching** — With 100+ sources, may exceed input token limits
 
 ### Medium Priority
 5. **Alembic in production lifespan** — Currently `create_all` in dev; prod should run `alembic upgrade head`
@@ -75,4 +75,4 @@
 
 ## Blockers
 
-None — all 11 phases committed. Session changes need committing. Ready for hardening work.
+None — all 11 phases committed and process files are now aligned to current state.

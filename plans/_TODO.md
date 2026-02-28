@@ -1,34 +1,32 @@
 ---
 type: task-list
 project: raris
-updated: 2026-02-25
+updated: 2026-02-26
 ---
 
 # Active Tasks
 
 ## In Progress
 
-- [ ] Write Phase 0 spec and all planning documents `#status/active #priority/critical #source/session`
+- [ ] Implement RSS and Federal Register monitoring in change monitor `#status/active #priority/critical #source/session`
 
-## Up Next — Phase 0
+## Up Next — Hardening Backlog
 
-- [ ] Scaffold Docker Compose (`backend`, `frontend`, `db`, `redis`) `#status/backlog #priority/critical #source/session`
-- [ ] Write `docker-compose.yml` and `.env.example` `#status/backlog #priority/critical #source/session`
-- [ ] Set up GitHub Actions CI pipeline (lint + test + build) `#status/backlog #priority/important #source/session`
-- [ ] Configure branch protection rules on `main` `#status/backlog #priority/important #source/session`
-- [ ] Initialize FastAPI backend skeleton (`backend/app/main.py`, router structure) `#status/backlog #priority/critical #source/session`
-- [ ] Initialize React + Vite frontend skeleton (`frontend/src/App.tsx`, routing) `#status/backlog #priority/critical #source/session`
-- [ ] Define evaluation framework metrics and test harness skeleton `#status/backlog #priority/important #source/session`
-- [ ] Phase 1 spec review and approval `#status/backlog #priority/critical #source/session`
+- [ ] Implement embedding provider abstraction (OpenAI + Gemini) and wire retrieval/cache to registry `#status/backlog #priority/critical #source/session`
+- [ ] Batch relationship mapper input to avoid token overflow on deep manifests `#status/backlog #priority/critical #source/session`
+- [ ] Run Alembic migrations in production lifespan instead of `create_all` `#status/backlog #priority/important #source/session`
+- [ ] Move CORS and SECRET_KEY to env config and validate LLM keys on startup `#status/backlog #priority/important #source/session`
+- [ ] Create insurance ground-truth evaluation dataset for precision@k benchmarking `#status/backlog #priority/important #source/session`
+- [ ] Add frontend route code-splitting and improve loading/empty states `#status/backlog #priority/normal #source/session`
+- [ ] Add mypy/pyright and Docker build smoke checks to CI `#status/backlog #priority/normal #source/session`
+- [ ] Add state body URL verification for generated department links `#status/backlog #priority/normal #source/session`
 
-## Up Next — Phase 1 (after Phase 0 exit criteria met)
+## Recently Completed
 
-- [ ] Implement LLM provider abstraction layer `#status/backlog #priority/critical #source/session`
-- [ ] Build Domain Discovery Agent (5 sub-components) `#status/backlog #priority/critical #source/session`
-- [ ] Implement YAML manifest schema + validator `#status/backlog #priority/critical #source/session`
-- [ ] Build FastAPI manifest endpoints `#status/backlog #priority/critical #source/session`
-- [ ] Build React Manifest Review Dashboard `#status/backlog #priority/critical #source/session`
-- [ ] Run Insurance domain discovery — produce first manifest `#status/backlog #priority/important #source/session`
+- [x] Deliver Phases 0-11 implementation baseline `#status/done #priority/critical #source/session` @completed(2026-02-26T12:00:00-05:00)
+- [x] Pass Docker smoke test across backend/frontend/db/redis `#status/done #priority/critical #source/session` @completed(2026-02-26T12:00:00-05:00)
+- [x] Fix integration regressions from smoke test (Dockerfile, async loading, prompt depth, UI results flow) `#status/done #priority/critical #source/session` @completed(2026-02-26T12:00:00-05:00)
 
 ## Blocked
 
+- None
