@@ -140,7 +140,8 @@ class DiscoveryGraph:
 
         yield self._event("step", step="L0_landscape", status="complete",
                           message=f"L0: Found {len(bodies)} regulatory bodies.",
-                          discovery_level=0, bodies_found=len(bodies))
+                          discovery_level=0, bodies_found=len(bodies),
+                          nodes_at_level=len(bodies), cumulative_programs=0)
 
         # ── L0: Source Hunter (grounded, batched) ─────────────────────────
         yield self._event("step", step="L0_sources", status="running",
@@ -187,7 +188,8 @@ class DiscoveryGraph:
 
         yield self._event("step", step="L0_sources", status="complete",
                           message=f"L0: Found {len(all_sources)} sources.",
-                          discovery_level=0, sources_found=len(all_sources))
+                          discovery_level=0, sources_found=len(all_sources),
+                          cumulative_programs=0)
 
         # ── L1: Entity Expansion (grounded + topic seeds) ────────────────
         yield self._event("step", step="L1_expansion", status="running",
@@ -246,7 +248,8 @@ class DiscoveryGraph:
                           message=f"L1: Found {len(l1_programs)} programs across "
                                   f"{len(entity_types_to_expand)} entity types.",
                           discovery_level=1, programs_found=len(l1_programs),
-                          nodes_at_level=len(entity_types_to_expand))
+                          nodes_at_level=len(entity_types_to_expand),
+                          cumulative_programs=len(all_programs))
 
         # ── L2: Program dedup and merge ───────────────────────────────────
         yield self._event("step", step="L2_dedup", status="running",

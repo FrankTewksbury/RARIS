@@ -203,6 +203,91 @@ class TestDiscoveryGraphRun:
         assert 3 in levels_seen  # L3
 
     @pytest.mark.asyncio
+    async def test_cumulative_programs_in_step_events(self, mock_db):
+        """Step events include cumulative_programs for progress tracking."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-1")
+
+        events = []
+        async for event in graph.run(
+            "DPA programs",
+            seed_index={"cdfi": [{"name": "CDFI Program"}]},
+            seed_programs=[{"name": "CDFI Program"}],
+        ):
+            events.append(event)
+
+        # All completed step events should have cumulative_programs
+        completed_steps = [
+            e for e in events
+            if e["event"] == "step" and e["data"].get("status") == "complete"
+        ]
+        for step in completed_steps:
+            assert "cumulative_programs" in step["data"], (
+                f"Step {step['data'].get('step')} missing cumulative_programs"
+            )
+
+    @pytest.mark.asyncio
+    async def test_nodes_at_level_in_step_events(self, mock_db):
+        """L0 landscape and L1 expansion emit nodes_at_level."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-2")
+
+        events = []
+        async for event in graph.run("DPA programs"):
+            events.append(event)
+
+        # L0 landscape complete should have nodes_at_level
+        l0_landscape = [
+            e for e in events
+            if e["event"] == "step"
+            and e["data"].get("step") == "L0_landscape"
+            and e["data"].get("status") == "complete"
+        ]
+        assert len(l0_landscape) == 1
+        assert "nodes_at_level" in l0_landscape[0]["data"]
+        assert l0_landscape[0]["data"]["nodes_at_level"] >= 1
+
+        # L1 expansion complete should have nodes_at_level
+        l1_complete = [
+            e for e in events
+            if e["event"] == "step"
+            and e["data"].get("step") == "L1_expansion"
+            and e["data"].get("status") == "complete"
+        ]
+        assert len(l1_complete) == 1
+        assert "nodes_at_level" in l1_complete[0]["data"]
+
+    @pytest.mark.asyncio
+    async def test_seed_match_rate_by_topic_structure(self, mock_db):
+        """Complete event seed_match_rate_by_topic has correct structure."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-3")
+
+        events = []
+        async for event in graph.run(
+            "DPA programs",
+            seed_index={
+                "cdfi": [{"name": "CDFI Program"}],
+                "veteran": [{"name": "VA DPA"}],
+            },
+            seed_programs=[
+                {"name": "CDFI Program", "program_type": "cdfi"},
+                {"name": "VA DPA", "program_type": "veteran"},
+            ],
+        ):
+            events.append(event)
+
+        complete = [e for e in events if e["event"] == "complete"][0]
+        rates = complete["data"]["seed_match_rate_by_topic"]
+        assert isinstance(rates, dict)
+        # Both seed topics should appear
+        assert "cdfi" in rates
+        assert "veteran" in rates
+        # Rates are floats between 0 and 1
+        for topic, rate in rates.items():
+            assert 0.0 <= rate <= 1.0
+
+    @pytest.mark.asyncio
     async def test_uses_grounded_calls(self, mock_db):
         """Verify that grounded (web search) LLM calls are used."""
         llm = MockLLM()
