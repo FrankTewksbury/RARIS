@@ -83,6 +83,7 @@ async def generate_manifest(
         payload.seed_metrics,
         payload.constitution_text,
         payload.instruction_text,
+        payload.discovery_mode,
     )
 
     return GenerateManifestResponse(
@@ -105,6 +106,7 @@ class _GeneratePayload:
         seed_metrics: dict,
         constitution_text: str = "",
         instruction_text: str = "",
+        discovery_mode: str = "flat",
     ) -> None:
         self.domain_description = domain_description
         self.llm_provider = llm_provider
@@ -116,6 +118,7 @@ class _GeneratePayload:
         self.seed_metrics = seed_metrics
         self.constitution_text = constitution_text
         self.instruction_text = instruction_text
+        self.discovery_mode = discovery_mode
 
 
 def _raise_missing_domain_validation() -> None:
@@ -366,6 +369,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             seed_anchors=[],
             seed_programs=[],
             seed_metrics={},
+            discovery_mode=parsed.discovery_mode,
         )
 
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
@@ -404,6 +408,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             "k_depth": k_depth,
             "geo_scope": str(form.get("geo_scope", "state")).strip() or "state",
             "target_segments": target_segments,
+            "discovery_mode": str(form.get("discovery_mode", "flat")).strip() or "flat",
         }
         try:
             parsed = GenerateManifestRequest.model_validate(form_payload)
@@ -455,6 +460,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             },
             constitution_text=constitution_text,
             instruction_text=instruction_text,
+            discovery_mode=parsed.discovery_mode,
         )
 
     raise HTTPException(status_code=415, detail="Unsupported content type")
@@ -472,26 +478,47 @@ async def _run_agent(
     seed_metrics: dict | None = None,
     constitution_text: str = "",
     instruction_text: str = "",
+    discovery_mode: str = "flat",
 ):
     """Run the discovery agent in background and push events to the queue."""
     queue = _event_queues.get(manifest_id)
     try:
         provider = get_provider(llm_provider)
         async with async_session() as db:
-            agent = DomainDiscoveryAgent(llm=provider, db=db, manifest_id=manifest_id)
-            async for event in agent.run(
-                domain_description,
-                k_depth=k_depth,
-                geo_scope=geo_scope,
-                target_segments=target_segments or [],
-                seed_anchors=seed_anchors or [],
-                seed_programs=seed_programs or [],
-                seed_metrics=seed_metrics or {},
-                constitution_text=constitution_text,
-                instruction_text=instruction_text,
-            ):
-                if queue:
-                    await queue.put(event)
+            if discovery_mode == "hierarchical":
+                from app.agent.graph_discovery import DiscoveryGraph
+
+                seed_index = _index_seeds_by_type(seed_programs or [])
+                agent = DiscoveryGraph(llm=provider, db=db, manifest_id=manifest_id)
+                async for event in agent.run(
+                    domain_description,
+                    k_depth=k_depth,
+                    geo_scope=geo_scope,
+                    target_segments=target_segments or [],
+                    seed_index=seed_index,
+                    seed_programs=seed_programs or [],
+                    seed_anchors=seed_anchors or [],
+                    seed_metrics=seed_metrics or {},
+                    constitution_text=constitution_text,
+                    instruction_text=instruction_text,
+                ):
+                    if queue:
+                        await queue.put(event)
+            else:
+                agent = DomainDiscoveryAgent(llm=provider, db=db, manifest_id=manifest_id)
+                async for event in agent.run(
+                    domain_description,
+                    k_depth=k_depth,
+                    geo_scope=geo_scope,
+                    target_segments=target_segments or [],
+                    seed_anchors=seed_anchors or [],
+                    seed_programs=seed_programs or [],
+                    seed_metrics=seed_metrics or {},
+                    constitution_text=constitution_text,
+                    instruction_text=instruction_text,
+                ):
+                    if queue:
+                        await queue.put(event)
     except Exception:
         logger.exception("Agent run failed for manifest %s", manifest_id)
         if queue:

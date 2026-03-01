@@ -12,6 +12,7 @@ class GenerateManifestRequest(BaseModel):
     k_depth: int = Field(default=2, ge=1, le=4)
     geo_scope: Literal["national", "state", "municipal"] = "state"
     target_segments: list[str] = []
+    discovery_mode: Literal["flat", "hierarchical"] = "flat"
 
 
 class GenerateManifestResponse(BaseModel):

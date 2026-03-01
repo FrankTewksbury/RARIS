@@ -24,6 +24,20 @@ def test_generate_manifest_request_default_provider():
     assert req.k_depth == 2
     assert req.geo_scope == "state"
     assert req.target_segments == []
+    assert req.discovery_mode == "flat"
+
+
+def test_generate_manifest_request_hierarchical_mode():
+    req = GenerateManifestRequest(
+        domain_description="DPA programs",
+        discovery_mode="hierarchical",
+    )
+    assert req.discovery_mode == "hierarchical"
+
+
+def test_generate_manifest_request_invalid_discovery_mode():
+    with pytest.raises(ValidationError):
+        GenerateManifestRequest(domain_description="test", discovery_mode="invalid")
 
 
 def test_generate_manifest_request_depth_bounds():
