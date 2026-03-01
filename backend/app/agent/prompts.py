@@ -263,3 +263,168 @@ Return JSON:
 }}
 
 Do not include duplicate programs that differ only by punctuation/case."""
+
+
+# ---------------------------------------------------------------------------
+# Hierarchical Graph Discovery (V3) — Level-Aware Prompts
+# ---------------------------------------------------------------------------
+
+GROUNDED_LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify ALL relevant
+regulatory bodies organized by jurisdiction level. USE YOUR WEB SEARCH CAPABILITY to find CURRENT,
+real entities and their actual websites. Do not rely on training data alone.
+
+Domain: {domain_description}
+{guidance_block}
+
+CRITICAL INSTRUCTIONS:
+- Use web search to verify each entity exists and find its CURRENT official website URL.
+- You MUST enumerate EVERY relevant body individually. Do NOT summarize or group them.
+- Include all federal agencies, state housing finance agencies, national associations,
+  self-regulatory organizations, and industry bodies relevant to this domain.
+- Every URL must be verified via web search — do NOT guess or hallucinate URLs.
+
+Return a JSON object with this structure:
+{{
+  "regulatory_bodies": [
+    {{
+      "id": "short-kebab-case-id",
+      "name": "Full Official Name",
+      "jurisdiction": "federal|state|municipal",
+      "authority_type": "regulator|gse|sro|industry_body",
+      "url": "https://verified-official-website",
+      "governs": ["area1", "area2"]
+    }}
+  ],
+  "jurisdiction_hierarchy": {{
+    "federal": {{"bodies": ["id1", "id2"], "count": 0}},
+    "state": {{"bodies": ["id3"], "count": 0}},
+    "municipal": {{"bodies": [], "count": 0}}
+  }}
+}}
+
+You MUST list every single body with verified URLs."""
+
+GROUNDED_SOURCE_HUNTER_PROMPT = """For each of the following regulatory bodies, discover specific
+regulatory source documents. USE YOUR WEB SEARCH CAPABILITY to find REAL, CURRENT documents
+with verified URLs.
+
+Regulatory bodies:
+{bodies_json}
+{guidance_block}
+
+For each body, use web search to find at least 2-4 key source documents.
+
+CRITICAL RULES:
+- Every URL MUST be verified via web search — no hallucinated URLs.
+- Prefer direct, crawlable official program pages over summary pages.
+
+For each source, provide:
+{{
+  "id": "src-NNN",
+  "name": "Document name",
+  "regulatory_body": "body-id",
+  "type": "statute|regulation|guidance|standard|educational|guide",
+  "format": "html|pdf|legal_xml|api|structured_data",
+  "authority": "binding|advisory|informational",
+  "jurisdiction": "federal|state|municipal",
+  "url": "https://verified-specific-document-url",
+  "access_method": "scrape|download|api|manual",
+  "confidence": 0.0-1.0,
+  "needs_human_review": true/false
+}}
+
+Return a JSON object: {{"sources": [...]}}
+
+Number source IDs sequentially starting from src-{start_id:03d}."""
+
+L1_ENTITY_EXPANSION_PROMPT = """Expand the discovery graph for a specific entity type.
+USE YOUR WEB SEARCH CAPABILITY to find real entities and programs.
+
+Parent entity: {parent_entity_name} ({parent_entity_type})
+Entity type to discover: {target_entity_type}
+Geographic scope: {geo_scope}
+{guidance_block}
+
+Seed programs for this category (use as search hints):
+{seed_hints_json}
+
+Search queries to use (execute via web search):
+{search_queries}
+
+Return a JSON object:
+{{
+  "entities": [
+    {{
+      "id": "entity-kebab-case-id",
+      "name": "Entity Name",
+      "type": "{target_entity_type}",
+      "url": "https://verified-url",
+      "jurisdiction": "federal|state|municipal",
+      "programs": [
+        {{
+          "name": "Program Name",
+          "administering_entity": "Entity Name",
+          "geo_scope": "national|state|county|city|tribal",
+          "jurisdiction": "jurisdiction text",
+          "benefits": "summary",
+          "eligibility": "summary",
+          "status": "active|verification_pending",
+          "evidence_snippet": "text from web source",
+          "source_urls": ["https://verified-url"],
+          "confidence": 0.0-1.0,
+          "needs_human_review": false
+        }}
+      ]
+    }}
+  ]
+}}"""
+
+L3_GAP_FILL_PROMPT = """Fill coverage gaps in a DPA discovery run.
+USE YOUR WEB SEARCH CAPABILITY to find real programs for underrepresented categories.
+
+Domain: {domain_description}
+Geographic scope: {geo_scope}
+{guidance_block}
+
+Programs already discovered: {discovered_count}
+
+Unmatched seed programs (NOT found in L0-L2):
+{unmatched_seeds_json}
+
+Underrepresented categories:
+{gap_categories_json}
+
+INSTRUCTIONS:
+- For each unmatched seed, use web search to find the actual program page.
+- Only return programs verified via web search with at least one source URL.
+- Do NOT duplicate programs already discovered.
+
+Return a JSON object:
+{{
+  "programs": [
+    {{
+      "name": "Program Name",
+      "administering_entity": "Entity Name",
+      "geo_scope": "national|state|county|city|tribal",
+      "jurisdiction": "jurisdiction text",
+      "benefits": "summary",
+      "eligibility": "summary",
+      "status": "active|verification_pending",
+      "evidence_snippet": "text from web source",
+      "source_urls": ["https://verified-url"],
+      "provenance_links": {{
+        "seed_file": "optional",
+        "seed_row": "optional",
+        "source_ids": [],
+        "discovery_level": "L3"
+      }},
+      "confidence": 0.0-1.0,
+      "needs_human_review": false
+    }}
+  ],
+  "gap_fill_summary": {{
+    "seeds_recovered": 0,
+    "new_programs_found": 0,
+    "categories_searched": []
+  }}
+}}"""
