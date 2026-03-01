@@ -7,7 +7,7 @@ from app.llm.base import LLMProvider
 
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, model: str = "gpt-4o"):
+    def __init__(self, model: str = "gpt-5.2-pro"):
         self.client = AsyncOpenAI(api_key=settings.openai_api_key)
         self.model = model
 

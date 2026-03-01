@@ -46,7 +46,7 @@ def _build_fallback_chain(primary: str) -> list[str]:
         if m != primary:
             chain.append(m)
     if len(chain) == 1:
-        for m in ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview:no-think", "gemini-3.1-flash-preview"):
+        for m in ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview:no-think", "gemini-3-flash-preview"):
             if m != primary:
                 chain.append(m)
     return chain

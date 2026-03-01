@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     gemini_thinking_budget: int = 24576
     # Comma-separated ordered fallback chain. Supports :no-think suffix to disable thinking budget.
     # Primary is always tried first; this list provides the downgrade path.
-    gemini_fallback_models: str = "gemini-3.1-pro-preview,gemini-3.1-pro-preview:no-think,gemini-3.1-flash-preview"
+    gemini_fallback_models: str = "gemini-3.1-pro-preview,gemini-3.1-pro-preview:no-think,gemini-3-flash-preview"
 
     # Embeddings
     embedding_model: str = "text-embedding-3-large"
