@@ -8,6 +8,7 @@ from app.models.manifest import (
     CoverageAssessment,
     Manifest,
     ManifestStatus,
+    Program,
     Source,
 )
 from app.schemas.manifest import (
@@ -15,6 +16,7 @@ from app.schemas.manifest import (
     DomainMapResponse,
     ManifestDetail,
     ManifestSummary,
+    ProgramResponse,
     RegulatoryBodyResponse,
     SourceCreate,
     SourceResponse,
@@ -27,6 +29,7 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
         select(Manifest)
         .options(
             selectinload(Manifest.sources),
+            selectinload(Manifest.programs),
             selectinload(Manifest.regulatory_bodies),
             selectinload(Manifest.coverage_assessment).selectinload(
                 CoverageAssessment.known_gaps
@@ -92,14 +95,37 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
             ],
         )
 
+    programs = [
+        ProgramResponse(
+            id=p.id,
+            canonical_id=p.canonical_id,
+            name=p.name,
+            administering_entity=p.administering_entity,
+            geo_scope=p.geo_scope.value,
+            jurisdiction=p.jurisdiction,
+            benefits=p.benefits,
+            eligibility=p.eligibility,
+            status=p.status.value,
+            last_verified=p.last_verified,
+            evidence_snippet=p.evidence_snippet,
+            source_urls=p.source_urls or [],
+            provenance_links=p.provenance_links or {},
+            confidence=p.confidence,
+            needs_human_review=p.needs_human_review,
+        )
+        for p in manifest.programs
+    ]
+
     return ManifestDetail(
         id=manifest.id,
         domain=manifest.domain,
         status=manifest.status.value,
         created=manifest.created_at,
         sources_count=len(sources),
+        programs_count=len(programs),
         coverage_score=manifest.completeness_score,
         sources=sources,
+        programs=programs,
         domain_map=DomainMapResponse(
             regulatory_bodies=bodies,
             jurisdiction_hierarchy=manifest.jurisdiction_hierarchy or [],
@@ -111,7 +137,7 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
 async def list_manifests(db: AsyncSession) -> list[ManifestSummary]:
     result = await db.execute(
         select(Manifest)
-        .options(selectinload(Manifest.sources))
+        .options(selectinload(Manifest.sources), selectinload(Manifest.programs))
         .order_by(Manifest.created_at.desc())
     )
     manifests = result.scalars().all()
@@ -122,6 +148,7 @@ async def list_manifests(db: AsyncSession) -> list[ManifestSummary]:
             status=m.status.value,
             created=m.created_at,
             sources_count=len(m.sources) if m.sources else 0,
+            programs_count=len(m.programs) if m.programs else 0,
             coverage_score=m.completeness_score,
         )
         for m in manifests

@@ -26,3 +26,11 @@
 - OpenAI provider must forward max_tokens kwarg — was silently ignored, causing truncated responses
 - Dashboard switched from single-column to sidebar+main grid — auto-displays results after SSE completion
 - DFW process files synchronized to implementation state — roadmap updated to Phases 0-11 done snapshot and hardening backlog promoted to active
+
+## 2026-02-28
+- Added `programs` as a first-class discovery entity with dedicated table/schema/service mapping instead of overloading `sources`.
+- Added discovery depth controls (`k_depth`, `geo_scope`, `target_segments`) to request contract and agent runtime guidance context for explicit run tuning.
+- Kept backward compatibility for existing manifest generation calls by defaulting new controls server-side and in frontend form state.
+- Re-established DFW bootstrap compliance by creating `.dfw/personal-config.md` and persisting an audit artifact at `docs/013-output-dfw-compliance-audit.md`.
+- Activated Seeding as first-class input (`seeding_files[]`) with multi-file parsing/classification and deterministic queue priority metadata.
+- Added program enumerator LLM stage with dedup and persisted `programs` outputs in discovery runs.

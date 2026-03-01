@@ -147,3 +147,83 @@ Error logs MUST include full context:
 - [ ] Sequence: 3-digit, starts at 000, resets daily
 - [ ] Errors logged to both general and error logs
 - [ ] Debug messages logged to both general and debug logs
+
+---
+
+## Docker Observability (Track A — Project-Level)
+
+> **Track A** applies to this project immediately.
+> **Track B** (global reusable Docker rule) is a separate artifact produced in the same session;
+> once validated, this project will adopt it by reference.
+
+### 7. Near-Real-Time Monitoring Commands
+
+Operators MUST use these commands during active runs:
+
+```bash
+# Container health status
+docker compose ps
+
+# Live backend log tail (preferred for active runs)
+docker compose logs -f --tail=200 backend
+
+# Raw Docker events for container lifecycle signals
+docker events --filter container=raris-backend-1
+
+# One-shot status snapshot (useful in scripts)
+docker compose ps && docker compose logs --tail=50 backend
+```
+
+### 8. Required Structured Log Fields (Backend)
+
+Every pipeline stage transition and every LLM retry/fallback event MUST emit a structured
+log line to stdout that includes the following fields.
+FastAPI/Uvicorn routes these to `docker compose logs`.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `runId` | str | Yes | Unique ID for the active discovery run |
+| `manifestId` | str | Yes | Target manifest UUID |
+| `stage` | str | Yes | Pipeline stage name (e.g. `program_enumerator`) |
+| `provider` | str | Yes | LLM provider in use (`gemini`, `openai`, `anthropic`) |
+| `model` | str | Yes | Specific model ID used for this call |
+| `errorCode` | int \| None | Yes (on error) | HTTP status code from provider API |
+| `retryAttempt` | int | Yes (on retry) | 1-based retry index |
+| `fallbackModel` | str \| None | Yes (on downgrade) | Model selected for next attempt |
+| `batchIndex` | int \| None | Yes (batch ops) | Batch number within a batched stage |
+| `skippedBatches` | int \| None | Yes (batch ops) | Count of batches skipped due to exhausted retries |
+
+### 9. Mandatory stdout Summary Line Format
+
+Each pipeline stage transition MUST print a summary line to stdout using this pattern:
+
+```
+[STAGE] <stage_name> status=<running|complete|skipped|error> model=<model_id> sources=<N> programs=<N> skipped_batches=<N>
+```
+
+Examples:
+```
+[STAGE] source_hunter status=complete model=gemini-3-pro-preview sources=47 programs=0 skipped_batches=0
+[STAGE] program_enumerator status=complete model=gemini-3-flash-preview sources=47 programs=31 skipped_batches=1
+[STAGE] program_enumerator status=error model=gemini-3-pro-preview sources=47 programs=0 skipped_batches=3
+```
+
+### 10. Heartbeat Lines (Long Batch Operations)
+
+Any operation that runs longer than ~30 seconds MUST emit a periodic heartbeat line
+to stdout at intervals no greater than 30 seconds:
+
+```
+[HEARTBEAT] stage=program_enumerator batch=3/8 programs_so_far=14 elapsed_s=47
+```
+
+This ensures `docker compose logs -f` always shows recent progress and does not appear stalled.
+
+### 11. Docker Observability Summary Checklist
+
+- [ ] `docker compose logs -f --tail=200 backend` shows real-time stage transitions
+- [ ] Every retry attempt emits a WARNING log line with all required telemetry fields
+- [ ] Every model fallback/downgrade emits an INFO log line with `fallbackModel`
+- [ ] Every batch skip emits a WARNING log line with `batchIndex` and `skippedBatches`
+- [ ] Stage transitions emit `[STAGE]` summary lines to stdout
+- [ ] Long batch operations emit `[HEARTBEAT]` lines at ≤30s intervals

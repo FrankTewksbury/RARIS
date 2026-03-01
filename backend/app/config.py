@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     gemini_api_key: str = ""
+    gemini_model: str = "gemini-3-pro-preview"
+    gemini_thinking_budget: int = 24576
+    # Comma-separated ordered fallback chain used when primary model is overloaded/unavailable.
+    # The primary model (gemini_model) is always tried first; this list provides the downgrade path.
+    gemini_fallback_models: str = "gemini-3-pro-preview,gemini-3-flash-preview,gemini-2.5-flash"
 
     # Embeddings
     embedding_model: str = "text-embedding-3-large"

@@ -116,37 +116,110 @@ def get_embedding(text: str) -> list[float]:
 
 ## 5. Error Handling
 
-### Gemini-Specific Exceptions
-```python
-from google.api_core.exceptions import (
-    ResourceExhausted,
-    DeadlineExceeded,
-    InvalidArgument,
-    PermissionDenied
-)
+### SDK Exception Model (current: `python-genai`)
 
-def call_gemini_with_retry(func, max_retries: int = 3):
-    """Call Gemini with retry logic for common errors."""
-    import time
-    
-    for attempt in range(max_retries):
+Use `google.genai.errors` — NOT the legacy `google.api_core.exceptions`.
+
+```python
+from google.genai import errors
+
+# errors.APIError      — base class for all API errors; has .code (int HTTP status)
+# errors.ClientError   — 4xx errors (subclass of APIError)
+# errors.ServerError   — 5xx errors (subclass of APIError)
+```
+
+### Error Code Matrix and Action Policy
+
+| HTTP Code | gRPC Status | Action | Notes |
+|-----------|-------------|--------|-------|
+| `400 INVALID_ARGUMENT` | `INVALID_ARGUMENT` | **Fail-fast** | Fix request shape |
+| `400 FAILED_PRECONDITION` | `FAILED_PRECONDITION` | **Fail-fast** | Check billing/env |
+| `401 UNAUTHENTICATED` | `UNAUTHENTICATED` | **Fail-fast** | Check API key |
+| `403 PERMISSION_DENIED` | `PERMISSION_DENIED` | **Fail-fast** | Check model entitlement/quota |
+| `404 NOT_FOUND` | `NOT_FOUND` | **Fail-fast** (+ optional model alias remap) | Verify model ID |
+| `429 RESOURCE_EXHAUSTED` | `RESOURCE_EXHAUSTED` | **Retry + backoff + downgrade** | Quota or rate limit |
+| `500 INTERNAL` | `INTERNAL` | **Retry + backoff** | Transient server error |
+| `502 BAD_GATEWAY` | — | **Retry + backoff** | Infrastructure transient |
+| `503 UNAVAILABLE` | `UNAVAILABLE` | **Retry + backoff + downgrade** | Service overload |
+| `504 GATEWAY_TIMEOUT` | — | **Retry + backoff + downgrade** | Request timed out at infra |
+| Transport/OS error | — | **Retry + backoff** | Network blip |
+
+**Retryable codes:** `{429, 500, 502, 503, 504}` + transient transport exceptions.
+**Downgrade-eligible codes:** `{429, 503, 504}` — additionally advance to next model in fallback chain.
+**Fail-fast codes:** `{400, 401, 403, 404}` — raise immediately; do not retry.
+
+### Resilient Async Call Pattern
+
+```python
+import asyncio
+import random
+from google.genai import errors
+
+_RETRYABLE_CODES = frozenset({429, 500, 502, 503, 504})
+_DOWNGRADE_CODES = frozenset({429, 503, 504})
+_MAX_ATTEMPTS = 4
+_BASE_DELAY_S = 1.0
+_MAX_DELAY_S = 32.0
+
+def _error_code(exc: Exception) -> int | None:
+    code = getattr(exc, "code", None)
+    return code if isinstance(code, int) else None
+
+async def call_with_resilience(client, contents, config, fallback_chain: list[str]) -> str:
+    last_exc: Exception = RuntimeError("no attempts")
+    model_idx = 0
+    for attempt in range(_MAX_ATTEMPTS):
+        model = fallback_chain[min(model_idx, len(fallback_chain) - 1)]
         try:
-            return func()
-        except ResourceExhausted:
-            wait = 2 ** attempt
-            print(f"[WARN] Rate limited, waiting {wait}s...")
-            time.sleep(wait)
-        except DeadlineExceeded:
-            print(f"[WARN] Timeout, attempt {attempt + 1}/{max_retries}")
-            time.sleep(1)
-        except InvalidArgument as e:
-            print(f"[ERROR] Invalid request: {e}")
-            raise
-        except PermissionDenied as e:
-            print(f"[ERROR] Permission denied: {e}")
-            raise
-    
-    raise Exception("All retry attempts failed")
+            response = await client.aio.models.generate_content(
+                model=model, contents=contents, config=config
+            )
+            return response.text or ""
+        except errors.APIError as exc:
+            code = _error_code(exc)
+            last_exc = exc
+            if code not in _RETRYABLE_CODES:
+                raise  # fail-fast: 400/401/403/404
+            delay = min(_BASE_DELAY_S * (2 ** attempt) + random.uniform(0, 1.0), _MAX_DELAY_S)
+            if code in _DOWNGRADE_CODES and model_idx < len(fallback_chain) - 1:
+                model_idx += 1  # advance to next model in chain
+            await asyncio.sleep(delay)
+        except (TimeoutError, ConnectionError, OSError) as exc:
+            last_exc = exc
+            delay = min(_BASE_DELAY_S * (2 ** attempt) + random.uniform(0, 1.0), _MAX_DELAY_S)
+            await asyncio.sleep(delay)
+    raise last_exc
+```
+
+### Required Telemetry Fields (per retry attempt)
+
+All retry/fallback log entries MUST include:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runId` | str | Active discovery run identifier |
+| `manifestId` | str | Target manifest |
+| `stage` | str | Pipeline stage (e.g. `program_enumerator`) |
+| `provider` | str | `gemini` |
+| `model` | str | Model used for this attempt |
+| `errorCode` | int \| None | HTTP status code |
+| `retryAttempt` | int | 1-based attempt index |
+| `fallbackModel` | str \| None | Model to be tried next, or `null` |
+| `delayMs` | float | Backoff delay applied before next attempt |
+
+### Model Downgrade / Fallback Policy
+
+- **Configuration:** Set `GEMINI_FALLBACK_MODELS` as a comma-separated ordered list.
+  - Example: `gemini-3-pro-preview,gemini-3-flash-preview,gemini-2.5-flash`
+- **Trigger:** Only on downgrade-eligible codes (`429`, `503`, `504`).
+- **Deterministic fail-fast:** Auth and request-shape errors (`400`, `401`, `403`, `404`) MUST NOT trigger fallback — fix the root cause instead.
+- **Logging:** Every downgrade MUST emit a structured log line with `model`, `fallbackModel`, `errorCode`, and `retryAttempt`.
+
+### Deprecated Import — DO NOT USE
+
+```python
+# WRONG — legacy SDK, not used with python-genai
+from google.api_core.exceptions import ResourceExhausted, DeadlineExceeded
 ```
 
 ---

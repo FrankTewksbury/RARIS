@@ -14,10 +14,16 @@ Important rules:
 - Be explicit about gaps — it's better to identify a gap than to fabricate a source
 """
 
+GUIDANCE_CONTEXT_BLOCK = """
+Additional guidance documents:
+{guidance_context}
+"""
+
 LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify ALL relevant
 regulatory bodies organized by jurisdiction level.
 
 Domain: {domain_description}
+{guidance_block}
 
 CRITICAL INSTRUCTIONS:
 - You MUST enumerate EVERY relevant body individually. Do NOT summarize or group them.
@@ -57,9 +63,18 @@ educational materials, and guides.
 
 Regulatory bodies:
 {bodies_json}
+{guidance_block}
 
 For each body, find at least 1-3 key regulatory sources. For major federal agencies,
 find more (3-5). Focus on the most important, authoritative documents.
+
+CRITICAL EXPANSION RULES (Stage-2 scraping target):
+- The manifest feeds web acquisition. Prefer direct, crawlable official program pages over summary pages.
+- For each body, include program catalog/index pages PLUS individual program detail pages.
+- Do not stop at one homepage/program overview URL if deeper official program endpoints exist.
+- Use seeded program/provider hints from guidance to discover additional official pages.
+- When `k_depth` in guidance is 3 or higher, target broad coverage: typically 6-12 source URLs per body where available.
+- Every URL must be official or authoritative for that body/program.
 
 For each source, provide:
 {{
@@ -96,6 +111,7 @@ between them. Identify:
 
 Sources:
 {sources_json}
+{guidance_block}
 
 Return a JSON object mapping source IDs to their relationships:
 {{
@@ -115,6 +131,7 @@ relationships than many speculative ones."""
 COVERAGE_ASSESSOR_PROMPT = """Assess the coverage completeness of this regulatory domain discovery.
 
 Domain: {domain_description}
+{guidance_block}
 
 Regulatory bodies found: {bodies_count}
 Sources found: {sources_count}
@@ -142,3 +159,53 @@ Return a JSON object:
   ],
   "assessment_notes": "Overall assessment narrative"
 }}"""
+
+PROGRAM_ENUMERATOR_PROMPT = """Extract concrete assistance programs from the discovered sources.
+
+Domain: {domain_description}
+{guidance_block}
+
+Sources:
+{sources_json}
+
+Seeded direct program candidates:
+{seed_programs_json}
+
+Rules:
+- Seeded records are POINTERS only. They are candidate hints and are not final output by themselves.
+- Final programs MUST be source-verified using discovered official sources.
+- Every final program MUST include:
+  1) at least one official source URL in source_urls
+  2) at least one discovered source id in provenance_links.source_ids
+  3) an evidence_snippet derived from the discovered source context
+- If a seeded candidate cannot be source-verified, do NOT emit it in programs.
+- Normalize provider names and program names for dedup-ready output.
+- Geo scope must be one of: national|state|county|city|tribal.
+- Status must be one of: active|paused|closed|verification_pending.
+- Confidence is 0.0 to 1.0.
+
+Return JSON:
+{{
+  "programs": [
+    {{
+      "name": "Program name",
+      "administering_entity": "Agency or provider",
+      "geo_scope": "national|state|county|city|tribal",
+      "jurisdiction": "optional jurisdiction text",
+      "benefits": "optional summary",
+      "eligibility": "optional summary",
+      "status": "active|paused|closed|verification_pending",
+      "evidence_snippet": "quoted evidence",
+      "source_urls": ["https://..."],
+      "provenance_links": {{
+        "seed_file": "optional filename",
+        "seed_row": "optional row marker",
+        "source_ids": ["src-001"]
+      }},
+      "confidence": 0.0,
+      "needs_human_review": false
+    }}
+  ]
+}}
+
+Do not include duplicate programs that differ only by punctuation/case."""

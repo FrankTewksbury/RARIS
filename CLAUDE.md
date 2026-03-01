@@ -24,6 +24,10 @@
 > 3. **`.dfw/personal-config.md`** — Environment-specific paths, tool-to-directory mappings,
 >    drive aliases, MCP roots, and the active project registry.
 >
+> 4. **`context/_ACTIVE_CONTEXT.md`** (if present) — current state and immediate next actions.
+>
+> 5. **`plans/_TODO.md`** (if present) — active and queued implementation work.
+>
 > Failure to read these is a violation of P1 (Context Is Currency).
 > If you cannot access them, STOP and tell the user (P3).
 
@@ -89,8 +93,19 @@ DFW = Development Flywheel. It is the mandatory project methodology.
 | Version | Date | Change |
 |---------|------|--------|
 | 0.7.0 | 2026-02-20 | Model split — Claude-specific file references DFW-CONSTITUTION.md for universal rules |
+| 0.7.1 | 2026-02-28 | Added startup reads for `_ACTIVE_CONTEXT` and `_TODO`; added DPA Discovery V2 execution focus |
 
 ---
 
 > **PROJECT-SPECIFIC NOTES:**
 > *(Add project-specific persona, tech stack, architecture notes, and constraints below this line.)*
+
+## 5. Project Execution Focus — DPA Discovery V2
+
+- Current implementation track is DPA Discovery V2 execution.
+- Build progression is sequential: implement each plan item end-to-end before expanding scope.
+- Priority features in this track:
+  1. Activate `Seeding` control (replacing placeholder) with multi-file upload support
+  2. Introduce first-class program-level schema/model and seeding parser contract
+  3. Add explicit discovery depth controls (`k_depth`, `geo_scope`) in request path
+- Keep targeted tests stable under limiter constraints (set `RATE_LIMIT_RPM=0` for rapid integration test paths until a dedicated testing strategy is formalized).

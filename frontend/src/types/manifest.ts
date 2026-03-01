@@ -48,11 +48,31 @@ export interface ManifestSummary {
   status: ManifestStatus;
   created: string;
   sources_count: number;
+  programs_count: number;
   coverage_score: number;
+}
+
+export interface Program {
+  id: string;
+  canonical_id: string;
+  name: string;
+  administering_entity: string;
+  geo_scope: "national" | "state" | "county" | "city" | "tribal";
+  jurisdiction?: string;
+  benefits?: string;
+  eligibility?: string;
+  status: "active" | "paused" | "closed" | "verification_pending";
+  last_verified?: string;
+  evidence_snippet?: string;
+  source_urls: string[];
+  provenance_links: Record<string, unknown>;
+  confidence: number;
+  needs_human_review: boolean;
 }
 
 export interface ManifestDetail extends ManifestSummary {
   sources: Source[];
+  programs: Program[];
   domain_map: {
     regulatory_bodies: RegulatoryBody[];
     jurisdiction_hierarchy: unknown;
@@ -63,6 +83,9 @@ export interface ManifestDetail extends ManifestSummary {
 export interface GenerateRequest {
   domain_description: string;
   llm_provider: string;
+  k_depth?: number;
+  geo_scope?: "national" | "state" | "municipal";
+  target_segments?: string[];
 }
 
 export interface GenerateResponse {

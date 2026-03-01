@@ -31,6 +31,8 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    volumes:
+      - ./.cursor:/workspace/.cursor
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-raris}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-raris}
       REDIS_URL: redis://redis:6379/0

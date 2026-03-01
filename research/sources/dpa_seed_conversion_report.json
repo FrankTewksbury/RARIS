@@ -1,0 +1,19 @@
+{
+  "source_pdf": "X:\\Keyz\\DPA\\DPA One- Search Results 2026-02-28 05_24_14.pdf",
+  "generated_files": {
+    "programs": "X:\\RARIS\\research\\sources\\dpa_seed_programs.json",
+    "anchors": "X:\\RARIS\\research\\sources\\dpa_seed_anchors.json",
+    "report": "X:\\RARIS\\research\\sources\\dpa_seed_conversion_report.json"
+  },
+  "counts": {
+    "program_records": 865,
+    "anchor_records": 0,
+    "quarantined_records": 0
+  },
+  "notes": [
+    "PDF rows contain wrapped text and occasional OCR artifacts.",
+    "Program records are deduplicated on (program, provider, jurisdiction, type).",
+    "Quarantined rows were excluded from output seeds."
+  ],
+  "quarantine_preview": []
+}

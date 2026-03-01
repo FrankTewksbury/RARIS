@@ -7,6 +7,8 @@ empty lists or 404s, which is the expected behavior.
 
 import pytest
 
+from app.routers import manifests as manifests_router
+
 # --- Health ---
 
 
@@ -44,6 +46,125 @@ async def test_generate_manifest_validation(client):
     data = resp.json()
     assert data["error"] is True
     assert "errors" in data
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_without_files(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "domain_description": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "manifest_id" in data
+    assert data["status"] == "generating"
+    assert "stream_url" in data
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_with_attachments(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    files = {
+        "constitution_file": ("constitution.md", b"must do guardrails", "text/markdown"),
+        "instruction_file": ("instruction.txt", b"focus on federal and all states", "text/plain"),
+    }
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "domain_description": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files=files,
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "manifest_id" in data
+    assert data["status"] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_with_seeding_files(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    files = [
+        ("seeding_files", ("seed.json", b'[{"url":"https://example.gov/portal"}]', "application/json")),
+        ("seeding_files", ("seed.csv", b"name,url\nExample,https://example.com", "text/csv")),
+    ]
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "domain_description": "US insurance regulation",
+            "llm_provider": "openai",
+            "geo_scope": "municipal",
+            "k_depth": "3",
+        },
+        files=files,
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "manifest_id" in data
+    assert data["status"] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_rejects_unsupported_attachment(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "domain_description": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files={
+            "constitution_file": ("constitution.exe", b"bad", "application/octet-stream"),
+        },
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] is True
+    assert "Unsupported file type" in data["detail"]
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_rejects_unsupported_seed_file(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "domain_description": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files={
+            "seeding_files": ("seed.exe", b"bad", "application/octet-stream"),
+        },
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] is True
+    assert "Unsupported seed file type" in data["detail"]
 
 
 @pytest.mark.asyncio

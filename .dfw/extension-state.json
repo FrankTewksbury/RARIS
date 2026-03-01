@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "pendingActions": [
+    {
+      "kind": "validate",
+      "scope": "root",
+      "rootPath": "x:\\RORI",
+      "requestedAt": "2026-02-13T15:23:50.408Z"
+    }
+  ]
+}

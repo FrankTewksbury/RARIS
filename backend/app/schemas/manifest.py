@@ -1,11 +1,17 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
+
+from app.config import settings
 
 
 class GenerateManifestRequest(BaseModel):
     domain_description: str
-    llm_provider: str = "openai"
+    llm_provider: str = settings.llm_provider
+    k_depth: int = Field(default=2, ge=1, le=4)
+    geo_scope: Literal["national", "state", "municipal"] = "state"
+    target_segments: list[str] = []
 
 
 class GenerateManifestResponse(BaseModel):
@@ -97,7 +103,26 @@ class ManifestSummary(BaseModel):
     status: str
     created: datetime
     sources_count: int
+    programs_count: int = 0
     coverage_score: float
+
+
+class ProgramResponse(BaseModel):
+    id: str
+    canonical_id: str
+    name: str
+    administering_entity: str
+    geo_scope: str
+    jurisdiction: str | None = None
+    benefits: str | None = None
+    eligibility: str | None = None
+    status: str
+    last_verified: datetime | None = None
+    evidence_snippet: str | None = None
+    source_urls: list[str] = []
+    provenance_links: dict = {}
+    confidence: float
+    needs_human_review: bool
 
 
 class ManifestDetail(BaseModel):
@@ -106,8 +131,10 @@ class ManifestDetail(BaseModel):
     status: str
     created: datetime
     sources_count: int
+    programs_count: int = 0
     coverage_score: float
     sources: list[SourceResponse] = []
+    programs: list[ProgramResponse] = []
     domain_map: DomainMapResponse = DomainMapResponse()
     coverage_assessment: CoverageAssessmentResponse | None = None
 

@@ -185,6 +185,19 @@ These nine principles are the foundation of DFW. Every rule, convention, and pro
 
 > **Derives from:** P8 (Tools Are Fit-for-Purpose)
 
+### RULE: Build Kickoff Requires Context + Task Sync
+
+- When a user says "build", "implement", or equivalent, agents MUST first load current execution context:
+  - latest relevant handoff in `prompts/handoffs/`
+  - `context/_ACTIVE_CONTEXT.md`
+  - `plans/_TODO.md`
+- Agents MUST identify and execute the smallest shippable slice first, then continue iteratively.
+- Agents MUST update `plans/_TODO.md` to reflect newly active build work and completed items.
+- Agents MUST update `context/_ACTIVE_CONTEXT.md` at close of the build session with what changed, what is next, and blockers.
+- If requested build scope conflicts with current plan or priorities, agents MUST ask before proceeding (P3 + P2).
+
+> **Derives from:** P1 (Context Is Currency), P2 (Humans Steer), P3 (Ambiguity Stops Work), P4 (Explicit Over Implicit)
+
 ---
 
 ## 4. File Safety and Access Control
@@ -355,6 +368,7 @@ After loading context and assigning persona, display:
 | 0.6.0 | 2026-02-20 | Progressive state protocol, resume-first, drive equivalence directive |
 | 0.7.0 | 2026-02-20 | **Hub restructure + Model split.** Universal constitution extracted to `DFW-CONSTITUTION.md`. Model-specific files in `Tools/Model/`. Hub consolidated: `X:\DFW\Vault` (Obsidian) + `X:\DFW\Tools` (distribution). |
 | 0.8.0 | 2026-02-20 | **Project ID (PID) system.** Every project gets a unique `PID-XXXXX` identifier. PID in project.json, vault stubs, and global registry. |
+| 0.8.1 | 2026-02-28 | Added explicit build-kickoff protocol requiring handoff/active-context/TODO sync before implementation work. |
 
 ---
 

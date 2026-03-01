@@ -45,6 +45,21 @@ class Jurisdiction(enum.StrEnum):
     municipal = "municipal"
 
 
+class ProgramGeoScope(enum.StrEnum):
+    national = "national"
+    state = "state"
+    county = "county"
+    city = "city"
+    tribal = "tribal"
+
+
+class ProgramStatus(enum.StrEnum):
+    active = "active"
+    paused = "paused"
+    closed = "closed"
+    verification_pending = "verification_pending"
+
+
 class AccessMethod(enum.StrEnum):
     scrape = "scrape"
     download = "download"
@@ -87,6 +102,9 @@ class Manifest(Base):
         back_populates="manifest", cascade="all, delete-orphan"
     )
     sources: Mapped[list["Source"]] = relationship(
+        back_populates="manifest", cascade="all, delete-orphan"
+    )
+    programs: Mapped[list["Program"]] = relationship(
         back_populates="manifest", cascade="all, delete-orphan"
     )
     coverage_assessment: Mapped["CoverageAssessment | None"] = relationship(
@@ -165,3 +183,30 @@ class KnownGap(Base):
     coverage_assessment: Mapped["CoverageAssessment"] = relationship(
         back_populates="known_gaps"
     )
+
+
+class Program(Base):
+    __tablename__ = "programs"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("manifests.id"), nullable=False, index=True
+    )
+    canonical_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    administering_entity: Mapped[str] = mapped_column(String(255), nullable=False)
+    geo_scope: Mapped[ProgramGeoScope] = mapped_column(Enum(ProgramGeoScope))
+    jurisdiction: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    benefits: Mapped[str | None] = mapped_column(Text, nullable=True)
+    eligibility: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ProgramStatus] = mapped_column(
+        Enum(ProgramStatus), default=ProgramStatus.verification_pending
+    )
+    last_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_urls: Mapped[list | None] = mapped_column(JSONB, default=list)
+    provenance_links: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    manifest: Mapped["Manifest"] = relationship(back_populates="programs")

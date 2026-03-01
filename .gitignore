@@ -2,6 +2,9 @@
 .DS_Store
 Thumbs.db
 
+# Debug session logs
+.cursor/debug-*.log
+
 # DFW caches, personal config, and state files
 .dfw/.resync-sequence-cache.json
 .dfw/.resync-graph-cache.json

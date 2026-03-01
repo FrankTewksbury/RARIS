@@ -22,8 +22,44 @@ export function AgentProgressPanel({ events, isConnected }: Props) {
     .map((e) => e.step)
     .pop();
 
-  const progressEvent = events.find((e) => e.step === "progress");
+  const progressEvents = events.filter((e) => e.step === "progress");
+  const progressEvent = progressEvents.length > 0 ? progressEvents[progressEvents.length - 1] : undefined;
+  const latestProgressEvent = progressEvents.length > 0 ? progressEvents[progressEvents.length - 1] : undefined;
   const isComplete = events.some((e) => e.step === "complete");
+
+  // #region agent log
+  if (
+    progressEvent &&
+    latestProgressEvent &&
+    (
+      progressEvent.sources_found !== latestProgressEvent.sources_found ||
+      progressEvent.bodies_processed !== latestProgressEvent.bodies_processed
+    )
+  ) {
+    fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Debug-Session-Id": "2fe1ec",
+      },
+      body: JSON.stringify({
+        sessionId: "2fe1ec",
+        runId: "sse-stream",
+        hypothesisId: "H1",
+        location: "frontend/src/components/AgentProgressPanel.tsx:progressSelection",
+        message: "Displayed progress differs from latest progress event",
+        data: {
+          displayed_sources_found: progressEvent.sources_found ?? null,
+          displayed_bodies_processed: progressEvent.bodies_processed ?? null,
+          latest_sources_found: latestProgressEvent.sources_found ?? null,
+          latest_bodies_processed: latestProgressEvent.bodies_processed ?? null,
+          progress_event_count: progressEvents.length,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {});
+  }
+  // #endregion
 
   if (events.length === 0 && !isConnected) return null;
 

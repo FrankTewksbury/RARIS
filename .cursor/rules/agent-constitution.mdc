@@ -1,6 +1,6 @@
 ---
 name: agent-constitution
-description: Agent constitutional guardrails — enforces DFW-CONSTITUTION.md + CLAUDE.md as canonical operating guides, inlines critical safety rules, and mandates DFW compliance. Synced with v0.7.0.
+description: Agent constitutional guardrails — enforces DFW-CONSTITUTION.md + CLAUDE.md as canonical operating guides, inlines critical safety rules, and mandates DFW compliance. Synced with v0.8.1.
 alwaysApply: true
 ---
 
@@ -37,6 +37,8 @@ alwaysApply: true
 At session start, agents MUST also read:
 1. `docs/DFW-OPERATING-MANUAL.md` — methodology, tagging, session lifecycle, sequencing
 2. `.dfw/personal-config.md` — environment paths, tool mappings, drive aliases
+3. `context/_ACTIVE_CONTEXT.md` (if present) — current status and next actions
+4. `plans/_TODO.md` (if present) — active and queued work
 
 Failure to read these violates P1.
 
@@ -112,6 +114,13 @@ Failure to read these violates P1.
 ## RULE: Use UV for Python
 
 - UV is the mandatory Python package manager. MUST NOT use pip/conda/poetry unless UV is unavailable and the deviation is logged.
+
+## RULE: Build Kickoff Requires Context + Task Sync
+
+- When user intent is "build/implement", MUST read the latest relevant handoff plus `context/_ACTIVE_CONTEXT.md` and `plans/_TODO.md` before coding.
+- MUST start with the smallest shippable slice and proceed iteratively.
+- MUST update `plans/_TODO.md` and `context/_ACTIVE_CONTEXT.md` as build state changes.
+- If requested scope conflicts with existing plan priorities, MUST ask before proceeding.
 
 ---
 
