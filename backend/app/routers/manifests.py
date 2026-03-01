@@ -189,6 +189,69 @@ def _classify_seed_record(record: dict) -> str:
     return "anchor_seed"
 
 
+# ---------------------------------------------------------------------------
+# Program type inference — maps seeds to taxonomy categories for topic-indexed
+# injection during hierarchical discovery (L1 entity expansion).
+# See research/003-analysis-dpa-program-taxonomy.md for the full taxonomy.
+# ---------------------------------------------------------------------------
+
+_PROGRAM_TYPE_KEYWORDS: dict[str, list[str]] = {
+    "veteran": ["veteran", "va ", "military", "service member", "armed forces"],
+    "tribal": ["tribal", "native american", "alaska native", "section 184", "indian"],
+    "occupation": [
+        "teacher", "firefighter", "police", "ems", "good neighbor",
+        "gnnd", "first responder", "law enforcement", "educator",
+    ],
+    "cdfi": ["cdfi", "community development financial"],
+    "eah": ["employer", "workforce housing", "employee homeownership"],
+    "municipal": [
+        "city of", "county of", "cdbg", "home funds", "block grant",
+        "municipal", "town of", "village of",
+    ],
+    "lmi": ["low income", "moderate income", "lmi", "80% ami", "120% ami"],
+    "fthb": ["first-time", "first time", "fthb", "homebuyer"],
+}
+
+
+def _infer_program_type(record: dict) -> str:
+    """Infer program_type from seed record fields using keyword matching.
+
+    An explicit ``program_type`` or ``category`` field in the record takes
+    precedence over keyword inference.
+    """
+    explicit = record.get("program_type") or record.get("category")
+    if explicit:
+        return str(explicit).lower().strip()
+
+    searchable = " ".join([
+        str(record.get("name", "")),
+        str(record.get("program_name", "")),
+        str(record.get("administering_entity", "")),
+        str(record.get("provider", "")),
+        str(record.get("agency", "")),
+        str(record.get("benefits", "")),
+        str(record.get("eligibility", "")),
+    ]).lower()
+
+    for ptype, keywords in _PROGRAM_TYPE_KEYWORDS.items():
+        if any(kw in searchable for kw in keywords):
+            return ptype
+    return "general"
+
+
+def _index_seeds_by_type(seeds: list[dict]) -> dict[str, list[dict]]:
+    """Group seed records by their ``program_type`` field.
+
+    Returns a dict mapping program type strings to lists of seed records.
+    Seeds without a ``program_type`` key default to ``"general"``.
+    """
+    index: dict[str, list[dict]] = {}
+    for seed in seeds:
+        ptype = seed.get("program_type", "general")
+        index.setdefault(ptype, []).append(seed)
+    return index
+
+
 def _normalize_program_seed(record: dict) -> dict:
     return {
         "name": record.get("program_name") or record.get("name") or "Seed Program",
@@ -200,6 +263,7 @@ def _normalize_program_seed(record: dict) -> dict:
         "jurisdiction": record.get("jurisdiction"),
         "benefits": record.get("benefits"),
         "eligibility": record.get("eligibility"),
+        "program_type": _infer_program_type(record),
         "status": record.get("status") or "verification_pending",
         "evidence_snippet": record.get("evidence_snippet") or record.get("evidence"),
         "source_urls": record.get("source_urls") or ([record["url"]] if record.get("url") else []),
