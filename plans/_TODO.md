@@ -8,7 +8,13 @@ updated: 2026-03-01
 
 ## In Progress
 
-- [ ] DPA V2 Recall Fix: Items 0-5b (anthropic config, seed hint budget, seed batch pass, two-tier gate, seed prompt, seed metrics, Gemini 3.1 migration) `#status/active #priority/critical #source/session`
+- None
+
+## Up Next — Validation & Integration
+
+- [ ] **Live integration test**: run `discovery_mode=hierarchical` against Gemini with real DPA seed file `#status/ready #priority/critical #agent/claude-code`
+- [ ] **Seed recovery benchmarking**: measure recovery rate against V2 flat baseline (target: 50%+) `#status/ready #priority/critical #agent/claude-code`
+- [ ] **Frontend discovery UI**: surface `discovery_level`, per-topic match rates, and cumulative progress in results panel `#status/backlog #priority/important #agent/cursor`
 
 ## Up Next — Hardening Backlog
 
@@ -33,6 +39,16 @@ updated: 2026-03-01
 
 ## Recently Completed
 
+- [x] **DPA V3 Hierarchical Discovery** — full build complete (Phases A-E) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-01)
+  - [x] Prereq: fix model IDs (gemini-3-flash-preview, gpt-5.2-pro) → `f1cf512`
+  - [x] Phase A: `complete_grounded()` on all 3 LLM providers → `eb17f39`
+  - [x] Phase B: topic-indexed seed parser (`program_type` inference) → `2bc95f7`
+  - [x] Phase C: discovery graph engine (L0-L3) → `59dfa13`
+  - [x] Phase D: route wiring (`discovery_mode: flat | hierarchical`) → `896fe3a`
+  - [x] Phase E: level-aware metrics and observability → `472da4d`
+- [x] DPA V2 Recall Fix: Items 0-5b complete (anthropic config, seed hint budget, seed batch pass, two-tier gate, seed prompt, seed metrics, Gemini 3.1 migration) `#status/done #priority/critical #source/session` @completed(2026-03-01T18:00:00-05:00)
+- [x] LLM rules overhaul: all 3 vendor rules rewritten from March 2026 docs, web grounding sections added, Anthropic rule created `#status/done #priority/critical #source/session` @completed(2026-03-01T17:00:00-05:00)
+- [x] DPA program taxonomy: 3-axis classification (funding entity, benefit structure, eligibility persona) `#status/done #priority/important #source/session` @completed(2026-03-01T19:30:00-05:00)
 - [x] P0 Gemini resilience: retry/backoff/fallback in `gemini_provider.py` `#status/done #priority/critical #source/session` @completed(2026-03-01T09:30:00-05:00)
 - [x] P0 batch isolation: program_enumerator batch failures no longer abort full run `#status/done #priority/critical #source/session` @completed(2026-03-01T09:30:00-05:00)
 - [x] P0 partial persistence: source commit before enumeration prevents zero-output on late failure `#status/done #priority/critical #source/session` @completed(2026-03-01T09:30:00-05:00)
