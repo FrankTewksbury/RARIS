@@ -7,7 +7,7 @@ from google import genai
 from google.genai import errors, types
 
 from app.config import settings
-from app.llm.base import LLMProvider
+from app.llm.base import Citation, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,7 @@ class GeminiProvider(LLMProvider):
         config: types.GenerateContentConfig,
         *,
         label: str = "complete",
+        return_response: bool = False,
     ) -> str:
         """Execute generate_content with bounded exponential backoff and model fallback.
 
@@ -131,6 +132,8 @@ class GeminiProvider(LLMProvider):
                         "[gemini] %s recovered attempt=%d model=%s",
                         label, attempt + 1, current_model,
                     )
+                if return_response:
+                    return response
                 return response.text or ""
 
             except errors.APIError as exc:
@@ -190,3 +193,33 @@ class GeminiProvider(LLMProvider):
         config = self._build_config(kwargs)
         text = await self._call_with_resilience(contents, config, label="stream")
         yield text
+
+    async def complete_grounded(
+        self, messages: list[dict], **kwargs
+    ) -> tuple[str, list[Citation]]:
+        """Generate with Google Search grounding. Returns (text, citations)."""
+        contents = self._build_contents(messages)
+        config = self._build_config(kwargs)
+        config.tools = [types.Tool(google_search=types.GoogleSearch())]
+
+        response = await self._call_with_resilience(
+            contents, config, label="grounded", return_response=True,
+        )
+
+        citations: list[Citation] = []
+        text = response.text or ""
+        if response.candidates:
+            candidate = response.candidates[0]
+            gm = getattr(candidate, "grounding_metadata", None)
+            if gm:
+                chunks = getattr(gm, "grounding_chunks", None) or []
+                for chunk in chunks:
+                    web = getattr(chunk, "web", None)
+                    if web:
+                        citations.append(
+                            Citation(
+                                url=getattr(web, "uri", "") or "",
+                                title=getattr(web, "title", "") or "",
+                            )
+                        )
+        return text, citations
