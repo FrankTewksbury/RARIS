@@ -1,6 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
+from app.config import settings
 from app.schemas.manifest import (
     GenerateManifestRequest,
     ProgramResponse,
@@ -19,7 +20,7 @@ def test_generate_manifest_request_valid():
 
 def test_generate_manifest_request_default_provider():
     req = GenerateManifestRequest(domain_description="test")
-    assert req.llm_provider == "openai"
+    assert req.llm_provider == settings.llm_provider
     assert req.k_depth == 2
     assert req.geo_scope == "state"
     assert req.target_segments == []

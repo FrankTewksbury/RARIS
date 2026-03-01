@@ -46,7 +46,7 @@ def _build_fallback_chain(primary: str) -> list[str]:
         if m != primary:
             chain.append(m)
     if len(chain) == 1:
-        for m in ("gemini-3-pro-preview", "gemini-3-flash-preview", "gemini-2.5-flash"):
+        for m in ("gemini-3.1-pro-preview", "gemini-3.1-pro-preview:no-think", "gemini-3.1-flash-preview"):
             if m != primary:
                 chain.append(m)
     return chain
@@ -55,7 +55,7 @@ def _build_fallback_chain(primary: str) -> list[str]:
 class GeminiProvider(LLMProvider):
     def __init__(self, model: str | None = None):
         self.client = genai.Client(api_key=settings.gemini_api_key)
-        self.model = model or settings.gemini_model or "gemini-3-pro-preview"
+        self.model = model or settings.gemini_model or "gemini-3.1-pro-preview"
         self._fallback_chain = _build_fallback_chain(self.model)
 
     @staticmethod
@@ -110,12 +110,21 @@ class GeminiProvider(LLMProvider):
         # endregion
 
         for attempt in range(_MAX_ATTEMPTS):
-            current_model = self._fallback_chain[min(model_idx, len(self._fallback_chain) - 1)]
+            chain_entry = self._fallback_chain[min(model_idx, len(self._fallback_chain) - 1)]
+            if chain_entry.endswith(":no-think"):
+                current_model = chain_entry.removesuffix(":no-think")
+                attempt_config = types.GenerateContentConfig()
+                attempt_config.thinking_config = types.ThinkingConfig(thinking_budget=0)
+                if config.temperature is not None:
+                    attempt_config.temperature = config.temperature
+            else:
+                current_model = chain_entry
+                attempt_config = config
             try:
                 response = await self.client.aio.models.generate_content(
                     model=current_model,
                     contents=contents,
-                    config=config,
+                    config=attempt_config,
                 )
                 if attempt > 0:
                     logger.info(

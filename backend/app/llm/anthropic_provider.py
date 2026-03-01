@@ -7,9 +7,9 @@ from app.llm.base import LLMProvider
 
 
 class AnthropicProvider(LLMProvider):
-    def __init__(self, model: str = "claude-sonnet-4-20250514"):
+    def __init__(self, model: str | None = None):
         self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
-        self.model = model
+        self.model = model or settings.anthropic_model
 
     async def complete(self, messages: list[dict], **kwargs) -> str:
         system_msg = None

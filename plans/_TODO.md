@@ -1,20 +1,28 @@
 ---
 type: task-list
 project: raris
-updated: 2026-02-26
+updated: 2026-03-01
 ---
 
 # Active Tasks
 
 ## In Progress
 
-- [ ] DPA Discovery V2 item 6: implement evidence/dedup hard-gate rules and family-link handling `#status/active #priority/critical #source/session`
-- [ ] Implement RSS and Federal Register monitoring in change monitor `#status/active #priority/critical #source/session`
+- [ ] DPA V2 Recall Fix: Items 0-5b (anthropic config, seed hint budget, seed batch pass, two-tier gate, seed prompt, seed metrics, Gemini 3.1 migration) `#status/active #priority/critical #source/session`
 
 ## Up Next — Hardening Backlog
 
+- [ ] Implement RSS and Federal Register monitoring in change monitor `#status/backlog #priority/critical #source/session`
 - [ ] Implement embedding provider abstraction (OpenAI + Gemini) and wire retrieval/cache to registry `#status/backlog #priority/critical #source/session`
 - [ ] Batch relationship mapper input to avoid token overflow on deep manifests `#status/backlog #priority/critical #source/session`
+
+## Deferred — Gemini 3.1 Rule Items (Not Applicable / Future)
+
+- [ ] Per-model thinking budget awareness in fallback chain (Flash should get 4096, not 32768) `#status/deferred #priority/important #source/session`
+- [ ] Gemini Files API integration for documents > 1MB (not applicable until PDF ingestion via Gemini) `#status/deferred #priority/normal #source/session`
+- [ ] Gemini session resumption for long-horizon multi-turn tasks (not applicable — pipeline is stateless) `#status/deferred #priority/low #source/session`
+- [ ] Gemini `customtools` model for agentic tool-calling workflows (not applicable — pipeline is prompt-in/JSON-out) `#status/deferred #priority/low #source/session`
+- [ ] Gemini `flash-image-preview` for vision/OCR document layout analysis (not applicable — pipeline processes text only) `#status/deferred #priority/low #source/session`
 - [ ] Run Alembic migrations in production lifespan instead of `create_all` `#status/backlog #priority/important #source/session`
 - [ ] Move CORS and SECRET_KEY to env config and validate LLM keys on startup `#status/backlog #priority/important #source/session`
 - [ ] Create insurance ground-truth evaluation dataset for precision@k benchmarking `#status/backlog #priority/important #source/session`

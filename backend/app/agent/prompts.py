@@ -209,3 +209,57 @@ Return JSON:
 }}
 
 Do not include duplicate programs that differ only by punctuation/case."""
+
+SEED_ENUMERATOR_PROMPT = """Match seeded program candidates to discovered sources.
+
+Domain: {domain_description}
+{guidance_block}
+
+Available discovered sources (for verification context):
+{sources_json}
+
+Seeded program candidates to match:
+{seed_programs_json}
+
+Rules:
+- Each seeded candidate is a KNOWN program that you must attempt to match to a discovered source.
+- For each seed, search the available sources for any URL that is a plausible official home for that program.
+- If you find a matching source:
+    - Set source_urls to include that source's URL
+    - Set provenance_links.source_ids to include that source's id
+    - Set provenance_links.seed_file and seed_row from the seed record
+    - Set evidence_snippet to any relevant text you can derive from the source context
+    - If you cannot produce a full snippet, set evidence_snippet to empty string
+      and set needs_human_review: true
+    - Set confidence based on how confident you are the source matches this program
+- If NO source matches a seed, do NOT emit that program.
+- Normalize provider names and program names for dedup-ready output.
+- Geo scope must be one of: national|state|county|city|tribal.
+- Status must be one of: active|paused|closed|verification_pending.
+- Confidence is 0.0 to 1.0.
+
+Return JSON:
+{{
+  "programs": [
+    {{
+      "name": "Program name",
+      "administering_entity": "Agency or provider",
+      "geo_scope": "national|state|county|city|tribal",
+      "jurisdiction": "optional jurisdiction text",
+      "benefits": "optional summary",
+      "eligibility": "optional summary",
+      "status": "active|paused|closed|verification_pending",
+      "evidence_snippet": "quoted text or empty string",
+      "source_urls": ["https://..."],
+      "provenance_links": {{
+        "seed_file": "filename from seed record",
+        "seed_row": "row marker from seed record",
+        "source_ids": ["src-001"]
+      }},
+      "confidence": 0.0,
+      "needs_human_review": false
+    }}
+  ]
+}}
+
+Do not include duplicate programs that differ only by punctuation/case."""

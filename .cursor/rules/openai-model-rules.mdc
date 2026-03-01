@@ -1,50 +1,63 @@
 ---
-name: openai-model-rules
-description: GPT-5.2 Series Implementation Patterns for Research Graph RAG
+description: Global Implementation Standards for GPT-5.2 Series, Web Search, and Resilient RAG
+alwaysApply: false
+---
+# OpenAI GPT-5.2 Global Implementation Rules
+
+> **MANDATORY:** Do not rely on pre-2025 training data regarding model IDs or SDK patterns. Always use the implementation patterns defined in this document for all Python-based OpenAI integrations.
+
 ---
 
-# OpenAI Model Rules
-# GPT-5.2 Series Implementation Patterns
+## 1. Model Selection & Lifecycle
 
----
-
-## 1. Model Selection
-
-### Available Models (GPT-5.2 Series)
 | Model ID | Type | Use Case | Context Window |
 |----------|------|----------|----------------|
 | `gpt-5.2-pro` | Chat | **DEFAULT** - Most advanced, critical accuracy | 200K tokens |
 | `gpt-5.2` | Thinking | Complex reasoning, coding, summarization | 200K tokens |
 | `gpt-5.2-chat-latest` | Instant | Fast everyday tasks, writing | 200K tokens |
-| `gpt-5.2-codex` | Code | Software engineering, refactors | 200K tokens |
+| `gpt-5-mini` | Lightweight | Simple queries, cost-optimized | 200K tokens |
 
-### Task-Based Selection for Research Graph RAG
+### Reasoning Modes (GPT-5.2)
+
+GPT-5.2 supports configurable reasoning levels:
+
+| Level | Behavior | Use Case |
+|-------|----------|----------|
+| `none` | No internal reasoning (default, lowest latency) | Quick lookups, classification |
+| `low` | Light reasoning chain | Moderate complexity |
+| `high` | Deep reasoning chain | Complex multi-step analysis, deep research |
+
+### Task-Based Selection
+
 | Task Type | Model | Notes |
 |-----------|-------|-------|
 | Default / General | `gpt-5.2-pro` | Best accuracy and precision |
 | Simple queries | `gpt-5.2-chat-latest` | Fast, cost-effective |
 | Complex reasoning | `gpt-5.2` | Multi-step thinking |
-| Code generation | `gpt-5.2-codex` | Optimized for engineering |
+| Lightweight tasks | `gpt-5-mini` | Budget-friendly |
 
-### Deprecated Models - DO NOT USE
-- `gpt-4` → Use `gpt-5.2-pro`
-- `gpt-4o` → Use `gpt-5.2-pro`
-- `gpt-4o-mini` → Use `gpt-5.2-chat-latest`
-- `gpt-3.5-turbo` → Use `gpt-5.2-chat-latest`
+### Deprecated Models (DO NOT USE)
+
+* `gpt-4` / `gpt-4o` -> Use `gpt-5.2-pro`
+* `gpt-4o-mini` -> Use `gpt-5.2-chat-latest`
+* `gpt-3.5-turbo` -> Use `gpt-5.2-chat-latest`
 
 ---
 
-## 2. API Implementation (Python)
+## 2. Core API Implementation (Python SDK)
 
-### Client Initialization
+### 2.1 Client Initialization
+
 ```python
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 import os
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+async_client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 ```
 
-### Basic Chat Request Pattern
+### 2.2 Chat Completions Pattern
+
 ```python
 def call_gpt(
     prompt: str,
@@ -53,14 +66,11 @@ def call_gpt(
     max_tokens: int = 4096,
     temperature: float = 0.7
 ) -> str:
-    """Make a request to OpenAI Chat API."""
-    print(f"[INFO] Initializing OpenAI Model: {model}")
-    
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
+
     response = client.chat.completions.create(
         model=model,
         messages=messages,
@@ -72,9 +82,96 @@ def call_gpt(
 
 ---
 
-## 3. JSON Mode & Structured Outputs
+## 3. Web Search (Responses API)
 
-### JSON Mode
+The Responses API provides built-in web search as a tool. The model decides when to search based on the input prompt. Web search is **not** available via Chat Completions — use the Responses API.
+
+### 3.1 Basic Web Search
+
+```python
+response = client.responses.create(
+    model="gpt-5.2",
+    input="Find current down payment assistance programs in Texas",
+    tools=[{"type": "web_search"}]
+)
+
+print(response.output_text)
+```
+
+### 3.2 Accessing Citations
+
+Responses include inline URL citations with title and source location.
+
+```python
+for item in response.output:
+    if item.type == "message":
+        for annotation in item.content[0].annotations:
+            if annotation.type == "url_citation":
+                print(f"  {annotation.title}: {annotation.url}")
+```
+
+### 3.3 Domain Filtering
+
+Limit search results to specific domains (up to 100 URLs). Omit the `https://` prefix.
+
+```python
+response = client.responses.create(
+    model="gpt-5.2",
+    input="Find DPA programs",
+    tools=[{
+        "type": "web_search",
+        "filters": ["hud.gov", "consumerfinance.gov", "nhc.org"]
+    }]
+)
+```
+
+### 3.4 User Location for Geo-Scoped Search
+
+```python
+response = client.responses.create(
+    model="gpt-5.2",
+    input="Local housing assistance programs",
+    tools=[{
+        "type": "web_search",
+        "user_location": {
+            "country": "US",
+            "region": "Texas",
+            "city": "Houston",
+            "timezone": "America/Chicago"
+        }
+    }]
+)
+```
+
+### 3.5 Web Search Types
+
+| Type | Model | Behavior |
+|------|-------|----------|
+| Deep Research | `o3-deep-research`, `o4-mini-deep-research`, `gpt-5` (reasoning=high) | Agent-driven, hundreds of sources, runs for minutes |
+| Agentic Search | `gpt-5.2` (reasoning=high) | Model manages search loop, decides when to stop |
+| Non-Reasoning Search | `gpt-5.2` (reasoning=none) | Fast single-pass lookup, top results only |
+
+### 3.6 When to Use Web Search
+
+| Use Case | Web Search? | Rationale |
+|----------|------------|-----------|
+| Discovery — finding entities, URLs, programs | **YES** | Gets current data, prevents hallucinated URLs |
+| Verification — confirming a URL or program exists | **YES** | Live web check |
+| Classification — categorizing already-retrieved text | No | Input is already grounded |
+| JSON extraction — parsing structured data from text | No | Deterministic task, search adds latency |
+
+### 3.7 Limitations
+
+* Web search limits context window to 128K tokens (even on models with larger windows)
+* Not supported with `gpt-5` at `minimal` reasoning or `gpt-4.1-nano`
+* Domain filtering is Responses API only
+
+---
+
+## 4. Structured Outputs & JSON Mode
+
+### 4.1 JSON Mode (Chat Completions)
+
 ```python
 response = client.chat.completions.create(
     model="gpt-5.2-pro",
@@ -88,9 +185,10 @@ response = client.chat.completions.create(
 
 ---
 
-## 4. Error Handling
+## 5. Error Handling & Resilience
 
-### OpenAI-Specific Exceptions
+### 5.1 Exception Types
+
 ```python
 from openai import (
     APIError,
@@ -100,59 +198,66 @@ from openai import (
     AuthenticationError,
     BadRequestError
 )
+```
 
-def call_gpt_with_retry(func, max_retries: int = 3):
-    """Call GPT with retry logic for common errors."""
-    import time
-    
+### 5.2 Retry Policy
+
+| Exception | Action |
+|-----------|--------|
+| `RateLimitError` (429) | Retry with exponential backoff |
+| `APIConnectionError` | Retry with backoff |
+| `APIStatusError` (5xx) | Retry with backoff |
+| `AuthenticationError` (401) | **Fail fast** |
+| `BadRequestError` (400) | **Fail fast** |
+
+### 5.3 Resilient Pattern
+
+```python
+import time
+from openai import RateLimitError, APIConnectionError, APIStatusError, AuthenticationError, BadRequestError
+
+def call_with_retry(func, max_retries: int = 3):
     for attempt in range(max_retries):
         try:
             return func()
         except RateLimitError:
-            wait = 2 ** attempt
-            print(f"[WARN] Rate limited, waiting {wait}s...")
-            time.sleep(wait)
+            time.sleep(2 ** attempt)
         except APIConnectionError:
-            print(f"[WARN] Connection error, attempt {attempt + 1}/{max_retries}")
-            time.sleep(1)
-        except AuthenticationError as e:
-            print(f"[ERROR] Authentication failed: {e}")
-            raise
-        except BadRequestError as e:
-            print(f"[ERROR] Bad request: {e}")
+            time.sleep(2 ** attempt)
+        except (AuthenticationError, BadRequestError):
             raise
         except APIStatusError as e:
             if e.status_code >= 500:
-                print(f"[WARN] Server error {e.status_code}, retrying...")
                 time.sleep(2 ** attempt)
             else:
                 raise
-    
-    raise Exception("All retry attempts failed")
+    raise RuntimeError(f"All {max_retries} retry attempts failed")
 ```
 
 ---
 
-## 5. Quick Reference
+## 6. Quick Reference
 
-### Environment Variable
+### Environment Variables
+
 ```
 OPENAI_API_KEY=your_api_key_here
+OPENAI_MODEL=gpt-5.2-pro
 ```
 
 ### Minimal Working Example
+
 ```python
 import os
 from openai import OpenAI
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-response = client.chat.completions.create(
+response = client.responses.create(
     model="gpt-5.2-pro",
-    messages=[
-        {"role": "user", "content": "Analyze this document..."}
-    ]
+    input="Analyze this document...",
+    tools=[{"type": "web_search"}]
 )
 
-print(response.choices[0].message.content)
+print(response.output_text)
 ```

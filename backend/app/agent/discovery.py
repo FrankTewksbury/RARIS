@@ -16,6 +16,7 @@ from app.agent.prompts import (
     LANDSCAPE_MAPPER_PROMPT,
     PROGRAM_ENUMERATOR_PROMPT,
     RELATIONSHIP_MAPPER_PROMPT,
+    SEED_ENUMERATOR_PROMPT,
     SOURCE_HUNTER_PROMPT,
     SYSTEM_PROMPT,
 )
@@ -44,6 +45,9 @@ logger = logging.getLogger(__name__)
 # Max bodies per source-hunter batch to stay within output token limits
 SOURCE_HUNTER_BATCH_SIZE = 10
 PROGRAM_ENUMERATOR_BATCH_SIZE = 20
+SEED_BATCH_SIZE = 100
+SEED_SOURCE_CONTEXT_SIZE = 20
+MAX_SEED_HINT_BUDGET = 8_000  # chars reserved for seed hints within 24k guidance ceiling
 DEBUG_LOG_ENDPOINTS = (
     "http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6",
     "http://host.docker.internal:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6",
@@ -350,6 +354,18 @@ class DomainDiscoveryAgent:
         skipped_batches = program_records.get("skipped_batches", 0)
         verified_programs = [program for program in programs if self._is_source_verified_program(program)]
         deduped_programs = self._dedupe_programs(verified_programs)
+
+        seed_program_ids = {
+            p.get("provenance_links", {}).get("seed_row", "")
+            for p in deduped_programs
+            if p.get("provenance_links", {}).get("seed_row")
+        }
+        seed_recovery_count = len(seed_program_ids)
+        seed_recovery_rate = (
+            round(seed_recovery_count / len(seeded_program_candidates), 3)
+            if seeded_program_candidates else 0.0
+        )
+
         # region agent log
         _debug_log(
             "Program verification gate applied",
@@ -359,6 +375,8 @@ class DomainDiscoveryAgent:
                 "verified_program_count": len(verified_programs),
                 "dropped_unverified_count": len(programs) - len(verified_programs),
                 "skipped_batches": skipped_batches,
+                "seed_recovery_count": seed_recovery_count,
+                "seed_recovery_rate": seed_recovery_rate,
             },
             "H2",
         )
@@ -402,6 +420,9 @@ class DomainDiscoveryAgent:
             "step": "program_enumerator", "status": "complete",
             "programs_found": len(deduped_programs),
             "skipped_batches": skipped_batches,
+            "seed_recovery_count": seed_recovery_count,
+            "seed_recovery_rate": seed_recovery_rate,
+            "seed_total": len(seeded_program_candidates),
         }}
 
         # Step 4: Relationship Mapper
@@ -482,6 +503,8 @@ class DomainDiscoveryAgent:
             "total_sources": len(all_sources),
             "total_programs": len(deduped_programs),
             "coverage_score": coverage.get("completeness_score", 0.0),
+            "seed_recovery_count": seed_recovery_count,
+            "seed_recovery_rate": seed_recovery_rate,
         }}
 
     @staticmethod
@@ -523,13 +546,15 @@ class DomainDiscoveryAgent:
                     hint = f"{provider} :: {name}"
                     if jurisdiction:
                         hint += f" ({jurisdiction})"
+                    running_chars = sum(len(h) for h in unique_seed_hints)
+                    if running_chars + len(hint) > MAX_SEED_HINT_BUDGET:
+                        break
                     unique_seed_hints.append(hint)
-                if len(unique_seed_hints) >= 40:
-                    break
             snippets.append(
                 "Seeding context:\n"
                 f"- anchor seeds: {anchor_count}\n"
                 f"- program seeds: {seed_program_count}\n"
+                f"- seed hints shown: {len(unique_seed_hints)} of {seed_program_count} total\n"
                 f"- seed metrics: {json.dumps(seed_metrics or {}, ensure_ascii=True)}\n"
                 "- seed hints (provider :: program):\n"
                 + "\n".join(f"  - {hint}" for hint in unique_seed_hints)
@@ -626,24 +651,114 @@ class DomainDiscoveryAgent:
     ) -> dict:
         if not sources and not seed_programs:
             return {"programs": [], "skipped_batches": 0}
+
         merged_programs: list[dict] = []
         skipped_batches = 0
-        total_batches = max(1, (len(sources) + PROGRAM_ENUMERATOR_BATCH_SIZE - 1) // PROGRAM_ENUMERATOR_BATCH_SIZE)
+        context_sources = sources[:SEED_SOURCE_CONTEXT_SIZE]
+
+        total_seed_batches = max(1, (len(seed_programs) + SEED_BATCH_SIZE - 1) // SEED_BATCH_SIZE) if seed_programs else 0
+        total_source_batches = max(1, (len(sources) + PROGRAM_ENUMERATOR_BATCH_SIZE - 1) // PROGRAM_ENUMERATOR_BATCH_SIZE) if sources else 0
+        total_batches = total_seed_batches + total_source_batches
+
+        # --- Pass 1: Seed-driven enumeration ---
+        for i in range(0, len(seed_programs), SEED_BATCH_SIZE):
+            seed_batch = seed_programs[i:i + SEED_BATCH_SIZE]
+            batch_index = (i // SEED_BATCH_SIZE) + 1
+            _debug_log(
+                "Seed enumerator batch start",
+                {
+                    "batch_index": batch_index,
+                    "total_seed_batches": total_seed_batches,
+                    "seed_batch_size": len(seed_batch),
+                    "context_source_count": len(context_sources),
+                },
+                "H3",
+            )
+            batch_started = perf_counter()
+            sources_json = json.dumps(context_sources, indent=2)
+            seed_programs_json = json.dumps(seed_batch, indent=2)
+            prompt = SEED_ENUMERATOR_PROMPT.format(
+                domain_description=domain_description,
+                guidance_block=guidance_block,
+                sources_json=sources_json,
+                seed_programs_json=seed_programs_json,
+            )
+            if batch_index == 1:
+                _debug_log(
+                    "Seed enumerator prompt snapshot",
+                    {
+                        "batch_index": batch_index,
+                        "seed_batch_size": len(seed_batch),
+                        "context_source_count": len(context_sources),
+                        "prompt_chars": len(prompt),
+                        "prompt_preview": prompt[:1600],
+                    },
+                    "H5",
+                )
+            try:
+                response = await self.llm.complete([
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ], max_tokens=8192)
+                if batch_index == 1:
+                    _debug_log(
+                        "Seed enumerator raw response snapshot",
+                        {
+                            "batch_index": batch_index,
+                            "response_chars": len(response or ""),
+                            "response_preview": (response or "")[:1600],
+                        },
+                        "H5",
+                    )
+                batch_programs = _extract_json(response).get("programs", [])
+            except Exception as exc:
+                skipped_batches += 1
+                duration_ms = round((perf_counter() - batch_started) * 1000, 2)
+                _debug_log(
+                    "Seed enumerator batch skipped",
+                    {
+                        "batch_index": batch_index,
+                        "total_seed_batches": total_seed_batches,
+                        "skipped_batches_so_far": skipped_batches,
+                        "error": str(exc),
+                        "duration_ms": duration_ms,
+                    },
+                    "H3",
+                )
+                logger.warning(
+                    "[discovery] seed_enumerator batch %d/%d skipped — "
+                    "programs_so_far=%d error=%s",
+                    batch_index, total_seed_batches, len(merged_programs), exc,
+                )
+                continue
+
+            _debug_log(
+                "Seed enumerator batch complete",
+                {
+                    "batch_index": batch_index,
+                    "batch_program_count": len(batch_programs),
+                    "duration_ms": round((perf_counter() - batch_started) * 1000, 2),
+                },
+                "H3",
+            )
+            merged_programs.extend(batch_programs)
+
+        seed_pass_count = len(merged_programs)
+
+        # --- Pass 2: Source-driven enumeration ---
         for i in range(0, len(sources), PROGRAM_ENUMERATOR_BATCH_SIZE):
             batch_sources = sources[i:i + PROGRAM_ENUMERATOR_BATCH_SIZE]
-            batch_index = (i // PROGRAM_ENUMERATOR_BATCH_SIZE) + 1
-            # region agent log
+            batch_index = total_seed_batches + (i // PROGRAM_ENUMERATOR_BATCH_SIZE) + 1
             _debug_log(
                 "Program enumerator batch start",
                 {
                     "batch_index": batch_index,
                     "total_batches": total_batches,
                     "batch_source_count": len(batch_sources),
-                    "seed_program_sample_count": len(seed_programs[:100]),
+                    "seed_program_sample_count": min(100, len(seed_programs)),
                 },
                 "H3",
             )
-            # endregion
             batch_started = perf_counter()
             sources_json = json.dumps(batch_sources, indent=2)
             seed_programs_json = json.dumps(seed_programs[:100], indent=2)
@@ -653,27 +768,24 @@ class DomainDiscoveryAgent:
                 sources_json=sources_json,
                 seed_programs_json=seed_programs_json,
             )
-            if batch_index == 1:
-                # region agent log
+            if batch_index == total_seed_batches + 1:
                 _debug_log(
                     "Program enumerator prompt snapshot",
                     {
                         "batch_index": batch_index,
                         "batch_source_count": len(batch_sources),
-                        "seed_program_sample_count": len(seed_programs[:100]),
+                        "seed_program_sample_count": min(100, len(seed_programs)),
                         "prompt_chars": len(prompt),
                         "prompt_preview": prompt[:1600],
                     },
                     "H5",
                 )
-                # endregion
             try:
                 response = await self.llm.complete([
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ], max_tokens=8192)
-                if batch_index == 1:
-                    # region agent log
+                if batch_index == total_seed_batches + 1:
                     _debug_log(
                         "Program enumerator raw response snapshot",
                         {
@@ -683,7 +795,6 @@ class DomainDiscoveryAgent:
                         },
                         "H5",
                     )
-                    # endregion
                 batch_programs = _extract_json(response).get("programs", [])
             except Exception as exc:
                 skipped_batches += 1
@@ -706,7 +817,6 @@ class DomainDiscoveryAgent:
                 )
                 continue
 
-            # region agent log
             _debug_log(
                 "Program enumerator batch complete",
                 {
@@ -716,32 +826,44 @@ class DomainDiscoveryAgent:
                 },
                 "H3",
             )
-            # endregion
             merged_programs.extend(batch_programs)
-        # region agent log
+
         _debug_log(
-            "P0-batch-isolation: enumerator complete",
+            "Enumerator complete (seed + source passes)",
             {
                 "merged_programs": len(merged_programs),
+                "seed_pass_programs": seed_pass_count,
+                "source_pass_programs": len(merged_programs) - seed_pass_count,
                 "skipped_batches": skipped_batches,
                 "total_batches": total_batches,
-                "isolation_active": True,
-                "p0_check": "H2",
             },
-            "P0",
-            run_id="169697",
+            "H2",
         )
-        # endregion
-        # Seed programs are pointer hints only and must not be emitted directly.
         return {"programs": merged_programs, "skipped_batches": skipped_batches}
 
     @staticmethod
     def _is_source_verified_program(program_data: dict) -> bool:
+        """Two-tier verification gate.
+
+        Tier 1 (full): source_urls + source_ids + evidence_snippet
+        Tier 2 (seed-match): source_urls + source_ids + seed provenance marker
+        """
         source_urls = program_data.get("source_urls") or []
-        provenance_links = program_data.get("provenance_links") or {}
-        source_ids = provenance_links.get("source_ids") or []
+        provenance = program_data.get("provenance_links") or {}
+        source_ids = provenance.get("source_ids") or []
         evidence_snippet = (program_data.get("evidence_snippet") or "").strip()
-        return bool(source_urls and source_ids and evidence_snippet)
+        seed_file = (provenance.get("seed_file") or "").strip()
+        seed_row = str(provenance.get("seed_row") or "").strip()
+
+        has_source_anchors = bool(source_urls and source_ids)
+
+        if has_source_anchors and evidence_snippet:
+            return True
+
+        if has_source_anchors and (seed_file or seed_row):
+            return True
+
+        return False
 
     @staticmethod
     def _canonical_program_id(program_data: dict) -> str:
