@@ -1,7 +1,7 @@
 ---
 type: task-list
 project: raris
-updated: 2026-03-01
+updated: 2026-03-02
 ---
 
 # Active Tasks
@@ -10,10 +10,12 @@ updated: 2026-03-01
 
 - None
 
-## Up Next — Validation & Integration
+## Up Next — V5 Engine
 
-- [ ] **Live integration test**: run `discovery_mode=hierarchical` against Gemini with real DPA seed file `#status/ready #priority/critical #agent/claude-code`
-- [ ] **Seed recovery benchmarking**: measure recovery rate against V2 flat baseline (target: 50%+) `#status/ready #priority/critical #agent/claude-code`
+- [ ] **Planning:** New agent reads `prompts/006-handoff-discovery-v5-graph-bfs-engine.md` and produces `plans/NNN-plan-discovery-v5-bfs-engine.md` `#status/ready #priority/critical #agent/claude-desktop`
+- [ ] **V5 Build:** Implement plan — rewrite `graph_discovery.py` as true BFS engine, 6 sector L1 calls, per-entity L2 expansion `#status/blocked-by/planning #priority/critical #agent/cursor`
+- [ ] **Prereq:** Expand `AuthorityType` enum + `native_enum=False` + DB reset (can land before or as first V5 commit) `#status/ready #priority/critical #agent/cursor`
+- [ ] **V4 seed validation**: run with seed file after baseline confirmed → target 50%+ seed recovery `#status/blocked-by/v4-baseline #priority/critical #agent/claude-code`
 - [ ] **Frontend discovery UI**: surface `discovery_level`, per-topic match rates, and cumulative progress in results panel `#status/backlog #priority/important #agent/cursor`
 
 ## Up Next — Hardening Backlog
@@ -39,6 +41,17 @@ updated: 2026-03-01
 
 ## Recently Completed
 
+- [x] **DPA V4 Prompt-Driven Discovery** — full build complete (9 commits, 306 tests) `#status/done #priority/critical #agent/cursor` @completed(2026-03-02)
+  - [x] Commit 1: `docs/005-doc-base-instruction-template.md` — 7-section instruction template
+  - [x] Commit 2: `prompts/DPA_Prompt_v5.md` — DPA prompt rewritten to template contract
+  - [x] Commit 3: `prompts.py` — V4 prompts (L0_ORCHESTRATOR_SYSTEM + data-driven L1-L3)
+  - [x] Commit 4: `manifest.py` schema/model — `domain_description` → `manifest_name`
+  - [x] Commit 5: `manifests.py` router — `manifest_name` wiring + instruction_file warning
+  - [x] Commit 6: `DomainInputPanel.tsx` — frontend field rename + placeholder
+  - [x] Commit 7: `graph_discovery.py` — full V4 engine rewrite (L0 instruction-driven, L1-L3 data-driven)
+  - [x] Commit 8: tests (schema, integration, v4 new, v3 compat) — 306 passing
+  - [x] Commit 9: Dockerfile + .dockerignore — pytest in container (all-extras + copy tests)
+  - Root cause of final bug: MockLLM routing matched "verify" in L0 prompt → fixed to "programs to verify"
 - [x] **DPA V3 Hierarchical Discovery** — full build complete (Phases A-E) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-01)
   - [x] Prereq: fix model IDs (gemini-3-flash-preview, gpt-5.2-pro) → `f1cf512`
   - [x] Phase A: `complete_grounded()` on all 3 LLM providers → `eb17f39`

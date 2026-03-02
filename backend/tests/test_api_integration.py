@@ -58,7 +58,7 @@ async def test_generate_manifest_multipart_without_files(client, monkeypatch):
     resp = await client.post(
         "/api/manifests/generate",
         data={
-            "domain_description": "US insurance regulation",
+            "manifest_name": "US insurance regulation",
             "llm_provider": "openai",
         },
     )
@@ -83,7 +83,7 @@ async def test_generate_manifest_multipart_with_attachments(client, monkeypatch)
     resp = await client.post(
         "/api/manifests/generate",
         data={
-            "domain_description": "US insurance regulation",
+            "manifest_name": "US insurance regulation",
             "llm_provider": "openai",
         },
         files=files,
@@ -108,7 +108,7 @@ async def test_generate_manifest_multipart_with_seeding_files(client, monkeypatc
     resp = await client.post(
         "/api/manifests/generate",
         data={
-            "domain_description": "US insurance regulation",
+            "manifest_name": "US insurance regulation",
             "llm_provider": "openai",
             "geo_scope": "municipal",
             "k_depth": "3",
@@ -131,7 +131,7 @@ async def test_generate_manifest_rejects_unsupported_attachment(client, monkeypa
     resp = await client.post(
         "/api/manifests/generate",
         data={
-            "domain_description": "US insurance regulation",
+            "manifest_name": "US insurance regulation",
             "llm_provider": "openai",
         },
         files={
@@ -154,7 +154,7 @@ async def test_generate_manifest_rejects_unsupported_seed_file(client, monkeypat
     resp = await client.post(
         "/api/manifests/generate",
         data={
-            "domain_description": "US insurance regulation",
+            "manifest_name": "US insurance regulation",
             "llm_provider": "openai",
         },
         files={

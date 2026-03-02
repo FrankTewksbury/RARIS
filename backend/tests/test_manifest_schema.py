@@ -12,37 +12,36 @@ from app.schemas.manifest import (
 
 def test_generate_manifest_request_valid():
     req = GenerateManifestRequest(
-        domain_description="US Insurance regulation",
+        manifest_name="US Insurance regulation",
         llm_provider="openai",
     )
-    assert req.domain_description == "US Insurance regulation"
+    assert req.manifest_name == "US Insurance regulation"
 
 
 def test_generate_manifest_request_default_provider():
-    req = GenerateManifestRequest(domain_description="test")
+    req = GenerateManifestRequest(manifest_name="test")
     assert req.llm_provider == settings.llm_provider
     assert req.k_depth == 2
     assert req.geo_scope == "state"
     assert req.target_segments == []
-    assert req.discovery_mode == "flat"
 
 
-def test_generate_manifest_request_hierarchical_mode():
+def test_generate_manifest_request_geo_scope():
     req = GenerateManifestRequest(
-        domain_description="DPA programs",
-        discovery_mode="hierarchical",
+        manifest_name="DPA programs",
+        geo_scope="national",
     )
-    assert req.discovery_mode == "hierarchical"
+    assert req.geo_scope == "national"
 
 
-def test_generate_manifest_request_invalid_discovery_mode():
+def test_generate_manifest_request_invalid_geo_scope():
     with pytest.raises(ValidationError):
-        GenerateManifestRequest(domain_description="test", discovery_mode="invalid")
+        GenerateManifestRequest(manifest_name="test", geo_scope="galactic")
 
 
 def test_generate_manifest_request_depth_bounds():
     with pytest.raises(ValidationError):
-        GenerateManifestRequest(domain_description="test", k_depth=5)
+        GenerateManifestRequest(manifest_name="test", k_depth=5)
 
 
 def test_source_create_valid():

@@ -15,7 +15,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sse_starlette.sse import EventSourceResponse
 
-from app.agent.discovery import DomainDiscoveryAgent
 from app.config import settings
 from app.database import async_session, get_db
 from app.llm.registry import get_provider, resolve_provider_name
@@ -37,6 +36,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/manifests", tags=["manifests"])
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 ALLOWED_SEED_EXTENSIONS = {".json", ".jsonl", ".csv", ".txt", ".md"}
+ALLOWED_SECTOR_EXTENSIONS = {".json"}
 
 # In-memory store for SSE event queues per manifest
 _event_queues: dict[str, asyncio.Queue] = {}
@@ -51,7 +51,7 @@ async def generate_manifest(
     payload = await _parse_generate_request(request)
 
     # Generate manifest ID
-    domain = payload.domain_description.strip()
+    domain = payload.manifest_name.strip()
     timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
     domain_slug = domain[:30].lower().replace(" ", "-")
     manifest_id = f"raris-manifest-{domain_slug}-{timestamp}"
@@ -69,7 +69,7 @@ async def generate_manifest(
     # Set up event queue for SSE
     _event_queues[manifest_id] = asyncio.Queue()
 
-    # Launch agent in background
+    # Launch agent in background — always V5 BFS engine
     background_tasks.add_task(
         _run_agent,
         manifest_id,
@@ -78,12 +78,12 @@ async def generate_manifest(
         payload.k_depth,
         payload.geo_scope,
         payload.target_segments,
+        payload.sectors,
         payload.seed_anchors,
         payload.seed_programs,
         payload.seed_metrics,
         payload.constitution_text,
         payload.instruction_text,
-        payload.discovery_mode,
     )
 
     return GenerateManifestResponse(
@@ -96,29 +96,29 @@ async def generate_manifest(
 class _GeneratePayload:
     def __init__(
         self,
-        domain_description: str,
+        manifest_name: str,
         llm_provider: str,
         k_depth: int,
         geo_scope: str,
         target_segments: list[str],
+        sectors: list[dict],
         seed_anchors: list[dict],
         seed_programs: list[dict],
         seed_metrics: dict,
         constitution_text: str = "",
         instruction_text: str = "",
-        discovery_mode: str = "flat",
     ) -> None:
-        self.domain_description = domain_description
+        self.manifest_name = manifest_name
         self.llm_provider = llm_provider
         self.k_depth = k_depth
         self.geo_scope = geo_scope
         self.target_segments = target_segments
+        self.sectors = sectors
         self.seed_anchors = seed_anchors
         self.seed_programs = seed_programs
         self.seed_metrics = seed_metrics
         self.constitution_text = constitution_text
         self.instruction_text = instruction_text
-        self.discovery_mode = discovery_mode
 
 
 def _raise_missing_domain_validation() -> None:
@@ -126,7 +126,7 @@ def _raise_missing_domain_validation() -> None:
         [
             {
                 "type": "missing",
-                "loc": ("body", "domain_description"),
+                "loc": ("body", "manifest_name"),
                 "msg": "Field required",
                 "input": None,
             }
@@ -181,6 +181,51 @@ async def _extract_upload_text(upload: UploadFile) -> str:
         return "\n\n".join(paragraphs)
 
     return ""
+
+
+async def _parse_sector_upload(upload: UploadFile) -> list[dict]:
+    """Parse a sector config JSON file.
+
+    Expected format: list of objects with at minimum ``key`` and ``label`` fields.
+    Returns empty list on any parse failure — engine uses DEFAULT_SECTORS as fallback.
+    """
+    extension = Path(upload.filename or "").suffix.lower()
+    if extension not in ALLOWED_SECTOR_EXTENSIONS:
+        logger.warning("[manifests] sector file '%s' has unsupported extension — ignored", upload.filename)
+        return []
+
+    content = await upload.read()
+    if not content:
+        return []
+
+    try:
+        parsed = json.loads(content.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        logger.warning("[manifests] sector file parse error: %s — using default sectors", exc)
+        return []
+
+    if not isinstance(parsed, list):
+        logger.warning("[manifests] sector file must be a JSON array — using default sectors")
+        return []
+
+    sectors: list[dict] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            continue
+        if not item.get("key") or not item.get("label"):
+            logger.warning("[manifests] sector entry missing key/label — skipped: %s", item)
+            continue
+        sectors.append({
+            "key": str(item["key"]),
+            "label": str(item["label"]),
+            "priority": int(item.get("priority", len(sectors) + 1)),
+            "search_hints": list(item.get("search_hints", [])),
+        })
+
+    if not sectors:
+        logger.warning("[manifests] sector file contained no valid entries — using default sectors")
+
+    return sectors
 
 
 def _classify_seed_record(record: dict) -> str:
@@ -358,18 +403,18 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             parsed = GenerateManifestRequest.model_validate(body)
         except ValidationError as exc:
             raise RequestValidationError(exc.errors()) from exc
-        if not parsed.domain_description.strip():
+        if not parsed.manifest_name.strip():
             _raise_missing_domain_validation()
         return _GeneratePayload(
-            domain_description=parsed.domain_description,
+            manifest_name=parsed.manifest_name,
             llm_provider=resolve_provider_name(parsed.llm_provider),
             k_depth=parsed.k_depth,
             geo_scope=parsed.geo_scope,
             target_segments=parsed.target_segments,
+            sectors=[],
             seed_anchors=[],
             seed_programs=[],
             seed_metrics={},
-            discovery_mode=parsed.discovery_mode,
         )
 
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
@@ -402,23 +447,23 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
                 ]
             ) from None
         form_payload = {
-            "domain_description": str(form.get("domain_description", "")).strip(),
+            "manifest_name": str(form.get("manifest_name", "")).strip(),
             "llm_provider": str(form.get("llm_provider", settings.llm_provider)).strip()
             or settings.llm_provider,
             "k_depth": k_depth,
             "geo_scope": str(form.get("geo_scope", "state")).strip() or "state",
             "target_segments": target_segments,
-            "discovery_mode": str(form.get("discovery_mode", "flat")).strip() or "flat",
         }
         try:
             parsed = GenerateManifestRequest.model_validate(form_payload)
         except ValidationError as exc:
             raise RequestValidationError(exc.errors()) from exc
-        if not parsed.domain_description.strip():
+        if not parsed.manifest_name.strip():
             _raise_missing_domain_validation()
 
         constitution_upload = form.get("constitution_file")
         instruction_upload = form.get("instruction_file")
+        sector_upload = form.get("sector_file")
         seed_uploads = form.getlist("seeding_files")
 
         constitution_text = ""
@@ -428,6 +473,14 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
         instruction_text = ""
         if isinstance(instruction_upload, (UploadFile, StarletteUploadFile)):
             instruction_text = await _extract_upload_text(instruction_upload)
+        else:
+            logger.warning(
+                "[manifests] no instruction_file uploaded — engine will use generic fallback prompt"
+            )
+
+        sectors: list[dict] = []
+        if isinstance(sector_upload, (UploadFile, StarletteUploadFile)):
+            sectors = await _parse_sector_upload(sector_upload)
 
         seed_anchors: list[dict] = []
         seed_programs: list[dict] = []
@@ -441,11 +494,12 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             file_metrics.append(metrics)
 
         return _GeneratePayload(
-            domain_description=parsed.domain_description,
+            manifest_name=parsed.manifest_name,
             llm_provider=resolve_provider_name(parsed.llm_provider),
             k_depth=parsed.k_depth,
             geo_scope=parsed.geo_scope,
             target_segments=parsed.target_segments,
+            sectors=sectors,
             seed_anchors=seed_anchors,
             seed_programs=seed_programs,
             seed_metrics={
@@ -460,7 +514,6 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             },
             constitution_text=constitution_text,
             instruction_text=instruction_text,
-            discovery_mode=parsed.discovery_mode,
         )
 
     raise HTTPException(status_code=415, detail="Unsupported content type")
@@ -468,57 +521,39 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
 
 async def _run_agent(
     manifest_id: str,
-    domain_description: str,
+    manifest_name: str,
     llm_provider: str,
     k_depth: int = 2,
     geo_scope: str = "state",
     target_segments: list[str] | None = None,
+    sectors: list[dict] | None = None,
     seed_anchors: list[dict] | None = None,
     seed_programs: list[dict] | None = None,
     seed_metrics: dict | None = None,
     constitution_text: str = "",
     instruction_text: str = "",
-    discovery_mode: str = "flat",
 ):
-    """Run the discovery agent in background and push events to the queue."""
+    """Run the V5 BFS discovery engine in background and push events to the queue."""
     queue = _event_queues.get(manifest_id)
     try:
-        provider = get_provider(llm_provider)
-        async with async_session() as db:
-            if discovery_mode == "hierarchical":
-                from app.agent.graph_discovery import DiscoveryGraph
+        from app.agent.graph_discovery import DiscoveryGraph
 
-                seed_index = _index_seeds_by_type(seed_programs or [])
-                agent = DiscoveryGraph(llm=provider, db=db, manifest_id=manifest_id)
-                async for event in agent.run(
-                    domain_description,
-                    k_depth=k_depth,
-                    geo_scope=geo_scope,
-                    target_segments=target_segments or [],
-                    seed_index=seed_index,
-                    seed_programs=seed_programs or [],
-                    seed_anchors=seed_anchors or [],
-                    seed_metrics=seed_metrics or {},
-                    constitution_text=constitution_text,
-                    instruction_text=instruction_text,
-                ):
-                    if queue:
-                        await queue.put(event)
-            else:
-                agent = DomainDiscoveryAgent(llm=provider, db=db, manifest_id=manifest_id)
-                async for event in agent.run(
-                    domain_description,
-                    k_depth=k_depth,
-                    geo_scope=geo_scope,
-                    target_segments=target_segments or [],
-                    seed_anchors=seed_anchors or [],
-                    seed_programs=seed_programs or [],
-                    seed_metrics=seed_metrics or {},
-                    constitution_text=constitution_text,
-                    instruction_text=instruction_text,
-                ):
-                    if queue:
-                        await queue.put(event)
+        provider = get_provider(llm_provider)
+        seed_index = _index_seeds_by_type(seed_programs or [])
+        async with async_session() as db:
+            agent = DiscoveryGraph(llm=provider, db=db, manifest_id=manifest_id)
+            async for event in agent.run(
+                manifest_name,
+                k_depth=k_depth,
+                geo_scope=geo_scope,
+                sectors=sectors or [],
+                seed_index=seed_index,
+                seed_programs=seed_programs or [],
+                constitution_text=constitution_text,
+                instruction_text=instruction_text,
+            ):
+                if queue:
+                    await queue.put(event)
     except Exception:
         logger.exception("Agent run failed for manifest %s", manifest_id)
         if queue:
@@ -526,7 +561,6 @@ async def _run_agent(
                 "event": "error",
                 "data": {"message": "Agent run failed. Check server logs."},
             })
-        # Update manifest status
         async with async_session() as db:
             manifest = await db.get(Manifest, manifest_id)
             if manifest:

@@ -1,0 +1,72 @@
+[
+  {
+    "key": "federal",
+    "label": "Federal/National",
+    "priority": 1,
+    "search_hints": [
+      "{STATE}/{CITY}/{COUNTY} + HOME + homebuyer assistance",
+      "CDBG + homebuyer assistance + {STATE}",
+      "USDA Rural Development + homeownership assistance + {STATE}",
+      "VA + down payment assistance grant + {STATE}"
+    ]
+  },
+  {
+    "key": "state_hfa",
+    "label": "State HFA",
+    "priority": 2,
+    "search_hints": [
+      "{STATE} housing finance agency + down payment assistance",
+      "{STATE} HFA + second mortgage",
+      "{STATE} HFA + forgivable grant + first-time homebuyer"
+    ]
+  },
+  {
+    "key": "employer",
+    "label": "Employer/Industry",
+    "priority": 3,
+    "search_hints": [
+      "{CITY}/{STATE} + live near your work + homebuyer",
+      "{CITY}/{STATE} + employer assisted housing + workforce",
+      "{CITY}/{STATE} + university + employee homeownership",
+      "{CITY}/{STATE} + hospital system + workforce homebuyer",
+      "{CITY}/{STATE} + union + down payment assistance"
+    ]
+  },
+  {
+    "key": "nonprofit",
+    "label": "Nonprofit/CDFI",
+    "priority": 4,
+    "search_hints": [
+      "{CITY}/{STATE} + CDFI + down payment assistance",
+      "{CITY}/{STATE} + loan fund + homebuyer assistance",
+      "{CITY}/{STATE} + housing partnership + down payment",
+      "{CITY}/{STATE} + NeighborWorks + down payment assistance",
+      "{CITY}/{STATE} + Habitat for Humanity + homeownership",
+      "{CITY}/{STATE} + credit union + down payment assistance pool"
+    ]
+  },
+  {
+    "key": "tribal",
+    "label": "Tribal",
+    "priority": 5,
+    "search_hints": [
+      "{STATE} tribal housing authority + homeownership assistance",
+      "{COUNTY} tribal + down payment assistance",
+      "Section 184 + {STATE} + homebuyer",
+      "native american housing + {STATE} + purchase assistance"
+    ]
+  },
+  {
+    "key": "municipal",
+    "label": "Municipal/County/PHA",
+    "priority": 6,
+    "search_hints": [
+      "{CITY} housing department + homebuyer assistance",
+      "{CITY} community development + down payment",
+      "{COUNTY} housing + first-time homebuyer",
+      "{CITY}/{COUNTY} PHA + homeownership assistance",
+      "{CITY} housing trust fund + down payment",
+      "{COUNTY} redevelopment authority + purchase assistance"
+    ]
+  }
+]

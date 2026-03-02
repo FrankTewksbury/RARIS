@@ -1,12 +1,29 @@
-"""Hierarchical Graph Discovery Engine (V3).
+"""Hierarchical Graph Discovery Engine (V5) — Domain-Agnostic BFS.
 
-Implements L0/L1/L2/L3 traversal using grounded LLM calls and topic-indexed
-seed injection. Reuses existing pipeline utilities and prompts.
+V5 architecture:
+- L1: 6 (or N) parallel sector calls, each with a full 64-search AFC budget.
+  Each call receives the full instruction_text prefixed with a sector scope header.
+  No domain expertise lives in engine code — all methodology comes from the uploaded prompt.
+- L2: One focused expansion call per L1 entity (parallelized via asyncio.gather).
+  Each call finds all programs, portals, and guidelines for a single entity.
+- L3: (k_depth=3) Program detail per program node — benefits, eligibility, status, portals.
 
-Graph state is in-memory during the run. Final output is a flat manifest
-(programs, sources, bodies) — same schema as the V2 DomainDiscoveryAgent.
+Sector list is supplied at runtime from the uploaded sector JSON file.
+Falls back to DEFAULT_SECTORS (from prompts.py) if no sector file is provided.
+
+k_depth semantics:
+  k_depth=1 → L1 entity discovery only
+  k_depth=2 → L1 entities + L2 program expansion (default for first test run)
+  k_depth=3 → L1 + L2 + L3 program detail verification
+
+SSE events:
+  sector_start / sector_complete       — one pair per L1 sector
+  l1_assembly_complete                 — after all sectors merged and persisted
+  entity_expansion_start / entity_expansion_complete — per L2 entity (k_depth >= 2)
+  complete                             — final with coverage_summary + seed metrics
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -17,12 +34,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.discovery import _extract_json, _safe_enum
 from app.agent.prompts import (
-    GROUNDED_LANDSCAPE_MAPPER_PROMPT,
-    GROUNDED_SOURCE_HUNTER_PROMPT,
-    GUIDANCE_CONTEXT_BLOCK,
-    L1_ENTITY_EXPANSION_PROMPT,
-    L3_GAP_FILL_PROMPT,
-    SYSTEM_PROMPT,
+    DEFAULT_SECTORS,
+    L0_ORCHESTRATOR_SYSTEM,
+    SECTOR_SCOPE_HEADER,
 )
 from app.llm.base import LLMProvider
 from app.models.manifest import (
@@ -30,9 +44,7 @@ from app.models.manifest import (
     AuthorityLevel,
     AuthorityType,
     CoverageAssessment,
-    GapSeverity,
     Jurisdiction,
-    KnownGap,
     Manifest,
     ManifestStatus,
     Program,
@@ -46,20 +58,10 @@ from app.models.manifest import (
 
 logger = logging.getLogger(__name__)
 
-# Batch sizes — match V2 pipeline defaults
-SOURCE_HUNTER_BATCH_SIZE = 10
+# Confidence threshold below which items are flagged for human review
+L2_VERIFY_THRESHOLD = 0.6
 
-# Taxonomy-driven search queries per entity type (from taxonomy doc)
-_ENTITY_SEARCH_QUERIES: dict[str, str] = {
-    "state_hfa": 'List all State Housing Finance Agency second mortgage programs in {geo_scope} for 2026',
-    "municipal": 'city-level down payment assistance grants for {geo_scope} funded by CDBG or HOME funds',
-    "nonprofit": 'non-profit homeownership programs in {geo_scope} that offer silent second mortgages',
-    "employer": 'employer-assisted housing program {geo_scope} hospital university',
-    "tribal": 'Section 184 tribal housing authority homebuyer assistance {geo_scope}',
-    "cdfi": 'CDFI down payment assistance programs in {geo_scope}',
-}
-
-# Map seed program_type to taxonomy entity types for L1 expansion
+# Map seed program_type to sector keys for seed injection during L2 expansion
 _SEED_TO_ENTITY_TYPE: dict[str, str] = {
     "veteran": "federal",
     "tribal": "tribal",
@@ -72,9 +74,16 @@ _SEED_TO_ENTITY_TYPE: dict[str, str] = {
     "general": "state_hfa",
 }
 
+# Fallback instruction used when no instruction file is uploaded
+_FALLBACK_INSTRUCTION = (
+    "Discover all administering entities and assistance programs relevant to the assigned sector. "
+    "Use web search to find current, real entities with verified URLs. "
+    "Return structured JSON as specified in the OUTPUT FORMAT section."
+)
+
 
 class DiscoveryGraph:
-    """Orchestrates hierarchical L0-L3 discovery with web grounding."""
+    """V5 domain-agnostic BFS discovery engine."""
 
     def __init__(self, llm: LLMProvider, db: AsyncSession, manifest_id: str):
         self.llm = llm
@@ -83,96 +92,83 @@ class DiscoveryGraph:
 
     async def run(
         self,
-        domain_description: str,
+        manifest_name: str,
         *,
         k_depth: int = 2,
         geo_scope: str = "state",
-        target_segments: list[str] | None = None,
+        sectors: list[dict] | None = None,
+        sector_concurrency: int = 3,
         seed_index: dict[str, list[dict]] | None = None,
         seed_programs: list[dict] | None = None,
-        seed_anchors: list[dict] | None = None,
-        seed_metrics: dict | None = None,
         constitution_text: str = "",
         instruction_text: str = "",
     ) -> AsyncGenerator[dict, None]:
-        """Execute hierarchical discovery, yielding SSE events."""
-        _seed_index = seed_index or {}
-        all_seed_programs = seed_programs or []
-        guidance_block = self._build_guidance_block(
-            constitution_text, instruction_text,
-            k_depth=k_depth, geo_scope=geo_scope,
-            target_segments=target_segments or [],
-            seed_programs=all_seed_programs,
-            seed_metrics=seed_metrics or {},
-        )
+        """Execute V5 BFS discovery, yielding SSE events.
 
-        all_bodies: list[dict] = []
+        sectors: list of sector dicts from uploaded sector file.
+                 Falls back to DEFAULT_SECTORS if empty or None.
+        instruction_text: full text of the uploaded instruction file.
+                          Each sector call receives this verbatim, prefixed by
+                          a sector scope header. No domain content lives in code.
+        """
+        _sectors = sorted(
+            sectors if sectors else DEFAULT_SECTORS,
+            key=lambda s: s.get("priority", 99),
+        )
+        _seed_index = seed_index or {}
+        _seed_programs = seed_programs or []
+        _instruction = instruction_text.strip() or _FALLBACK_INSTRUCTION
+
+        # Prepend constitution guardrails if provided
+        if constitution_text.strip():
+            _instruction = (
+                "## Operational Guardrails (apply throughout)\n\n"
+                + constitution_text.strip()
+                + "\n\n---\n\n"
+                + _instruction
+            )
+
+        all_entities: list[dict] = []
         all_sources: list[dict] = []
         all_programs: list[dict] = []
         source_id_counter = 1
 
-        # ── L0: Federal/State Landscape (grounded) ───────────────────────
-        yield self._event("step", step="L0_landscape", status="running",
-                          message="L0: Discovering regulatory landscape with web grounding...",
-                          discovery_level=0)
+        # ── L1: Parallel Sector Discovery ────────────────────────────────
+        async for event in self._run_l1_sectors(
+            sectors=_sectors,
+            instruction_text=_instruction,
+            sector_concurrency=sector_concurrency,
+        ):
+            if event.get("event") == "_l1_sector_result":
+                # Internal event — harvest entities and sources
+                data = event.get("data", {})
+                sector_entities = data.get("administering_entities", [])
+                sector_sources = data.get("sources", [])
+                for src in sector_sources:
+                    src.setdefault("id", f"src-{source_id_counter:03d}")
+                    source_id_counter += 1
+                all_entities.extend(sector_entities)
+                all_sources.extend(sector_sources)
+            else:
+                yield event
 
-        landscape = await self._grounded_landscape_mapper(
-            domain_description, guidance_block,
-        )
-        bodies = landscape.get("regulatory_bodies", [])
-        all_bodies.extend(bodies)
-
-        # Persist L0 bodies
-        for body_data in bodies:
+        # Persist L1 entities as RegulatoryBody records
+        for entity in all_entities:
             self.db.add(RegulatoryBody(
-                id=body_data["id"],
+                id=entity.get("id", f"ent-{self._normalize_name(entity.get('name', ''))[:40]}"),
                 manifest_id=self.manifest_id,
-                name=body_data["name"],
-                jurisdiction=_safe_enum(Jurisdiction, body_data.get("jurisdiction")),
-                authority_type=_safe_enum(AuthorityType, body_data.get("authority_type")),
-                url=body_data.get("url", ""),
-                governs=body_data.get("governs", []),
+                name=entity.get("name", "Unknown Entity"),
+                jurisdiction=_safe_enum(Jurisdiction, entity.get("jurisdiction")),
+                authority_type=_safe_enum(AuthorityType, entity.get("entity_type")),
+                url=entity.get("url", ""),
+                governs=entity.get("governs", []),
             ))
 
-        manifest = await self.db.get(Manifest, self.manifest_id)
-        manifest.jurisdiction_hierarchy = landscape.get("jurisdiction_hierarchy")
-        await self.db.flush()
-
-        yield self._event("step", step="L0_landscape", status="complete",
-                          message=f"L0: Found {len(bodies)} regulatory bodies.",
-                          discovery_level=0, bodies_found=len(bodies),
-                          nodes_at_level=len(bodies), cumulative_programs=0)
-
-        # ── L0: Source Hunter (grounded, batched) ─────────────────────────
-        yield self._event("step", step="L0_sources", status="running",
-                          message=f"L0: Discovering sources for {len(bodies)} bodies...",
-                          discovery_level=0)
-
-        batches = [
-            bodies[i:i + SOURCE_HUNTER_BATCH_SIZE]
-            for i in range(0, len(bodies), SOURCE_HUNTER_BATCH_SIZE)
-        ]
-        for batch_idx, batch in enumerate(batches):
-            batch_sources = await self._grounded_source_hunter(
-                batch, start_id=source_id_counter, guidance_block=guidance_block,
-            )
-            new_sources = batch_sources.get("sources", [])
-            for src in new_sources:
-                src["id"] = f"src-{source_id_counter:03d}"
-                source_id_counter += 1
-            all_sources.extend(new_sources)
-
-            yield self._event("progress", discovery_level=0,
-                              sources_found=len(all_sources),
-                              bodies_processed=(batch_idx + 1) * SOURCE_HUNTER_BATCH_SIZE,
-                              total_bodies=len(bodies))
-
-        # Persist L0 sources
         for src_data in all_sources:
             self.db.add(Source(
                 id=src_data["id"],
                 manifest_id=self.manifest_id,
-                name=src_data["name"],
+                name=src_data.get("name", "Unknown Source"),
                 regulatory_body_id=src_data.get("regulatory_body", ""),
                 type=_safe_enum(SourceType, src_data.get("type")),
                 format=_safe_enum(SourceFormat, src_data.get("format")),
@@ -180,144 +176,82 @@ class DiscoveryGraph:
                 jurisdiction=_safe_enum(Jurisdiction, src_data.get("jurisdiction")),
                 url=src_data.get("url", ""),
                 access_method=_safe_enum(AccessMethod, src_data.get("access_method")),
-                confidence=src_data.get("confidence", 0.5),
-                needs_human_review=src_data.get("needs_human_review", False),
+                confidence=float(src_data.get("confidence", 0.5) or 0.5),
+                needs_human_review=bool(
+                    src_data.get("needs_human_review", False)
+                    or float(src_data.get("confidence", 0.5) or 0.5) < 0.5
+                ),
                 classification_tags=src_data.get("classification_tags", []),
             ))
+
+        manifest = await self.db.get(Manifest, self.manifest_id)
+
         await self.db.commit()
 
-        yield self._event("step", step="L0_sources", status="complete",
-                          message=f"L0: Found {len(all_sources)} sources.",
-                          discovery_level=0, sources_found=len(all_sources),
-                          cumulative_programs=0)
+        yield self._event("l1_assembly_complete",
+                          total_entities=len(all_entities),
+                          total_sources=len(all_sources),
+                          sector_count=len(_sectors))
 
-        # ── L1: Entity Expansion (grounded + topic seeds) ────────────────
-        yield self._event("step", step="L1_expansion", status="running",
-                          message="L1: Expanding discovery graph by entity type...",
-                          discovery_level=1)
+        if k_depth < 2:
+            # k_depth=1 — entity graph only, skip program expansion
+            manifest.status = ManifestStatus.pending_review
+            await self.db.commit()
+            yield self._event("complete",
+                              manifest_id=self.manifest_id,
+                              total_entities=len(all_entities),
+                              total_programs=0,
+                              coverage_summary=self._build_coverage_summary(_sectors, all_entities, []))
+            return
 
-        # Determine which entity types need expansion based on seed index
-        entity_types_to_expand = set()
-        for ptype in _seed_index:
-            mapped = _SEED_TO_ENTITY_TYPE.get(ptype)
-            if mapped:
-                entity_types_to_expand.add(mapped)
-        # Always expand these underrepresented types if seeds exist
-        for forced in ("municipal", "nonprofit", "employer", "tribal"):
-            if forced in _ENTITY_SEARCH_QUERIES:
-                entity_types_to_expand.add(forced)
+        # ── L2: Per-Entity Program Expansion ─────────────────────────────
+        async for event in self._run_l2_entity_expansion(
+            entities=all_entities,
+            instruction_text=_instruction,
+            seed_index=_seed_index,
+        ):
+            if event.get("event") == "_l2_entity_result":
+                data = event.get("data", {})
+                entity_programs = data.get("programs", [])
+                entity_sources = data.get("sources", [])
+                for src in entity_sources:
+                    src.setdefault("id", f"src-{source_id_counter:03d}")
+                    source_id_counter += 1
+                    all_sources.append(src)
+                    self.db.add(Source(
+                        id=src["id"],
+                        manifest_id=self.manifest_id,
+                        name=src.get("name", "Unknown Source"),
+                        regulatory_body_id=src.get("regulatory_body", ""),
+                        type=_safe_enum(SourceType, src.get("type")),
+                        format=_safe_enum(SourceFormat, src.get("format")),
+                        authority=_safe_enum(AuthorityLevel, src.get("authority")),
+                        jurisdiction=_safe_enum(Jurisdiction, src.get("jurisdiction")),
+                        url=src.get("url", ""),
+                        access_method=_safe_enum(AccessMethod, src.get("access_method")),
+                        confidence=float(src.get("confidence", 0.5) or 0.5),
+                        needs_human_review=bool(
+                            src.get("needs_human_review", False)
+                            or float(src.get("confidence", 0.5) or 0.5) < 0.5
+                        ),
+                        classification_tags=src.get("classification_tags", []),
+                    ))
+                for prog in entity_programs:
+                    prog.setdefault("provenance_links", {})
+                    prog["provenance_links"]["discovery_level"] = "L2"
+                    all_programs.append(prog)
+            else:
+                yield event
 
-        l1_programs: list[dict] = []
-        for entity_type in sorted(entity_types_to_expand):
-            # Find matching seeds for this entity type
-            matching_seeds: list[dict] = []
-            for ptype, mapped_entity in _SEED_TO_ENTITY_TYPE.items():
-                if mapped_entity == entity_type:
-                    matching_seeds.extend(_seed_index.get(ptype, []))
-
-            seed_hints = matching_seeds[:20]  # Cap hints per expansion
-            search_query = _ENTITY_SEARCH_QUERIES.get(
-                entity_type, f"down payment assistance programs {entity_type} {{geo_scope}}"
-            ).format(geo_scope=geo_scope)
-
-            try:
-                expansion = await self._entity_expansion(
-                    parent_entity_name=domain_description,
-                    parent_entity_type="domain",
-                    target_entity_type=entity_type,
-                    geo_scope=geo_scope,
-                    guidance_block=guidance_block,
-                    seed_hints=seed_hints,
-                    search_query=search_query,
-                )
-
-                for entity in expansion.get("entities", []):
-                    for program in entity.get("programs", []):
-                        program.setdefault("provenance_links", {})
-                        program["provenance_links"]["discovery_level"] = "L1"
-                        l1_programs.append(program)
-
-            except Exception as exc:
-                logger.warning(
-                    "[graph] L1 expansion for %s skipped: %s", entity_type, exc,
-                )
-
-        all_programs.extend(l1_programs)
-
-        yield self._event("step", step="L1_expansion", status="complete",
-                          message=f"L1: Found {len(l1_programs)} programs across "
-                                  f"{len(entity_types_to_expand)} entity types.",
-                          discovery_level=1, programs_found=len(l1_programs),
-                          nodes_at_level=len(entity_types_to_expand),
-                          cumulative_programs=len(all_programs))
-
-        # ── L2: Program dedup and merge ───────────────────────────────────
-        yield self._event("step", step="L2_dedup", status="running",
-                          message="L2: Deduplicating and merging programs...",
-                          discovery_level=2)
-
+        # Dedup programs
         deduped = self._dedupe_programs(all_programs)
 
-        yield self._event("step", step="L2_dedup", status="complete",
-                          message=f"L2: {len(deduped)} unique programs after dedup.",
-                          discovery_level=2, programs_found=len(deduped),
-                          cumulative_programs=len(deduped))
-
-        # ── L3: Gap Fill ──────────────────────────────────────────────────
-        yield self._event("step", step="L3_gap_fill", status="running",
-                          message="L3: Searching for unmatched seeds and coverage gaps...",
-                          discovery_level=3)
-
-        # Find unmatched seeds
-        discovered_names = {
-            self._normalize_name(p.get("name", "")) for p in deduped
-        }
-        unmatched_seeds = [
-            s for s in all_seed_programs
-            if self._normalize_name(s.get("name", "")) not in discovered_names
-        ]
-
-        # Identify gap categories
-        discovered_types = Counter(
-            p.get("provenance_links", {}).get("discovery_level", "L0")
-            for p in deduped
-        )
-        gap_categories = [
-            etype for etype in _ENTITY_SEARCH_QUERIES
-            if etype not in {
-                _SEED_TO_ENTITY_TYPE.get(p.get("program_type", "general"), "")
-                for p in deduped
-            }
-        ]
-
-        l3_programs: list[dict] = []
-        if unmatched_seeds or gap_categories:
-            try:
-                gap_result = await self._gap_fill(
-                    domain_description=domain_description,
-                    geo_scope=geo_scope,
-                    guidance_block=guidance_block,
-                    discovered_count=len(deduped),
-                    unmatched_seeds=unmatched_seeds[:50],  # Cap to avoid token overflow
-                    gap_categories=gap_categories,
-                )
-                l3_programs = gap_result.get("programs", [])
-                for p in l3_programs:
-                    p.setdefault("provenance_links", {})
-                    p["provenance_links"]["discovery_level"] = "L3"
-            except Exception as exc:
-                logger.warning("[graph] L3 gap fill failed: %s", exc)
-
-        all_programs_final = self._dedupe_programs(deduped + l3_programs)
-
-        yield self._event("step", step="L3_gap_fill", status="complete",
-                          message=f"L3: Found {len(l3_programs)} additional programs. "
-                                  f"Total: {len(all_programs_final)}.",
-                          discovery_level=3, programs_found=len(l3_programs),
-                          cumulative_programs=len(all_programs_final))
-
-        # ── Persist programs ──────────────────────────────────────────────
-        for idx, program_data in enumerate(all_programs_final, start=1):
+        # Persist programs
+        for idx, program_data in enumerate(deduped, start=1):
+            confidence = float(program_data.get("confidence", 0.0) or 0.0)
+            needs_review = bool(
+                program_data.get("needs_human_review", False) or confidence < 0.5
+            )
             self.db.add(Program(
                 id=self._program_row_id(idx),
                 manifest_id=self.manifest_id,
@@ -336,20 +270,17 @@ class DiscoveryGraph:
                 evidence_snippet=program_data.get("evidence_snippet"),
                 source_urls=program_data.get("source_urls", []),
                 provenance_links=program_data.get("provenance_links", {}),
-                confidence=float(program_data.get("confidence", 0.0) or 0.0),
-                needs_human_review=bool(program_data.get("needs_human_review", False)),
+                confidence=confidence,
+                needs_human_review=needs_review,
             ))
         await self.db.flush()
 
-        # ── Coverage assessment ───────────────────────────────────────────
-        # Compute seed match metrics
+        # Coverage assessment
         seed_match_by_topic = self._compute_seed_match_rates(
-            all_seed_programs, all_programs_final, _seed_index,
+            _seed_programs, deduped, _seed_index,
         )
-        total_seed_recovery = sum(
-            v["matched"] for v in seed_match_by_topic.values()
-        )
-        total_seeds = len(all_seed_programs)
+        total_seed_recovery = sum(v["matched"] for v in seed_match_by_topic.values())
+        total_seeds = len(_seed_programs)
         seed_recovery_rate = round(total_seed_recovery / total_seeds, 3) if total_seeds else 0.0
 
         jurisdiction_counts = Counter(s.get("jurisdiction", "") for s in all_sources)
@@ -364,143 +295,242 @@ class DiscoveryGraph:
         )
         self.db.add(assessment)
 
-        # Finalize manifest
+        coverage_summary = self._build_coverage_summary(_sectors, all_entities, deduped)
         manifest.status = ManifestStatus.pending_review
         manifest.completeness_score = assessment.completeness_score
+        manifest.coverage_summary = coverage_summary
         await self.db.commit()
 
         yield self._event("complete",
                           manifest_id=self.manifest_id,
+                          total_entities=len(all_entities),
                           total_sources=len(all_sources),
-                          total_bodies=len(all_bodies),
-                          total_programs=len(all_programs_final),
+                          total_programs=len(deduped),
                           coverage_score=assessment.completeness_score,
+                          coverage_summary=coverage_summary,
                           seed_recovery_count=total_seed_recovery,
                           seed_recovery_rate=seed_recovery_rate,
                           seed_match_rate_by_topic={
                               k: v["rate"] for k, v in seed_match_by_topic.items()
                           })
 
-    # ── LLM call wrappers ─────────────────────────────────────────────────
+    # ── L1: Parallel Sector Calls ─────────────────────────────────────────
 
-    async def _grounded_landscape_mapper(
-        self, domain_description: str, guidance_block: str,
-    ) -> dict:
-        prompt = GROUNDED_LANDSCAPE_MAPPER_PROMPT.format(
-            domain_description=domain_description,
-            guidance_block=guidance_block,
-        )
-        text, citations = await self.llm.complete_grounded([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], max_tokens=16384)
-        result = _extract_json(text)
-        # Attach grounding citations to bodies
-        citation_urls = {c.url for c in citations}
-        for body in result.get("regulatory_bodies", []):
-            body_url = body.get("url", "")
-            body["grounded"] = body_url in citation_urls
-        return result
-
-    async def _grounded_source_hunter(
-        self, bodies: list[dict], start_id: int, guidance_block: str,
-    ) -> dict:
-        bodies_json = json.dumps(bodies, indent=2)
-        prompt = GROUNDED_SOURCE_HUNTER_PROMPT.format(
-            bodies_json=bodies_json,
-            start_id=start_id,
-            guidance_block=guidance_block,
-        )
-        text, citations = await self.llm.complete_grounded([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], max_tokens=16384)
-        result = _extract_json(text)
-        # Mark sources as grounded if their URL was in citations
-        citation_urls = {c.url for c in citations}
-        for src in result.get("sources", []):
-            src_url = src.get("url", "")
-            src["grounded"] = src_url in citation_urls
-        return result
-
-    async def _entity_expansion(
+    async def _run_l1_sectors(
         self,
-        parent_entity_name: str,
-        parent_entity_type: str,
-        target_entity_type: str,
-        geo_scope: str,
-        guidance_block: str,
-        seed_hints: list[dict],
-        search_query: str,
-    ) -> dict:
-        prompt = L1_ENTITY_EXPANSION_PROMPT.format(
-            parent_entity_name=parent_entity_name,
-            parent_entity_type=parent_entity_type,
-            target_entity_type=target_entity_type,
-            geo_scope=geo_scope,
-            guidance_block=guidance_block,
-            seed_hints_json=json.dumps(seed_hints[:10], indent=2),
-            search_queries=search_query,
-        )
-        text, _citations = await self.llm.complete_grounded([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], max_tokens=8192)
-        return _extract_json(text)
-
-    async def _gap_fill(
-        self,
-        domain_description: str,
-        geo_scope: str,
-        guidance_block: str,
-        discovered_count: int,
-        unmatched_seeds: list[dict],
-        gap_categories: list[str],
-    ) -> dict:
-        prompt = L3_GAP_FILL_PROMPT.format(
-            domain_description=domain_description,
-            geo_scope=geo_scope,
-            guidance_block=guidance_block,
-            discovered_count=discovered_count,
-            unmatched_seeds_json=json.dumps(unmatched_seeds[:30], indent=2),
-            gap_categories_json=json.dumps(gap_categories, indent=2),
-        )
-        text, _citations = await self.llm.complete_grounded([
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ], max_tokens=8192)
-        return _extract_json(text)
-
-    # ── Utility methods ───────────────────────────────────────────────────
-
-    @staticmethod
-    def _build_guidance_block(
-        constitution_text: str,
+        sectors: list[dict],
         instruction_text: str,
-        k_depth: int = 2,
-        geo_scope: str = "state",
-        target_segments: list[str] | None = None,
-        seed_programs: list[dict] | None = None,
-        seed_metrics: dict | None = None,
-    ) -> str:
-        snippets: list[str] = []
-        if constitution_text.strip():
-            snippets.append(f"Constitution guardrails:\n{constitution_text.strip()[:12000]}")
-        if instruction_text.strip():
-            snippets.append(f"Instruction guidance:\n{instruction_text.strip()[:12000]}")
-        controls = [f"- k_depth: {k_depth}", f"- geo_scope: {geo_scope}"]
-        if target_segments:
-            controls.append(f"- target_segments: {', '.join(target_segments)}")
-        snippets.append("Run controls:\n" + "\n".join(controls))
-        if seed_programs:
-            snippets.append(f"Seeding context: {len(seed_programs)} program seeds available")
-        if not snippets:
-            return ""
-        return GUIDANCE_CONTEXT_BLOCK.format(guidance_context="\n\n".join(snippets))
+        sector_concurrency: int = 3,
+    ) -> AsyncGenerator[dict, None]:
+        """Run all sector calls, yielding SSE events and internal result events."""
+        total = len(sectors)
+
+        # Run in batches of sector_concurrency to respect API rate limits
+        for batch_start in range(0, total, sector_concurrency):
+            batch = sectors[batch_start:batch_start + sector_concurrency]
+
+            # Yield sector_start events before launching batch
+            for sector in batch:
+                yield self._event("sector_start",
+                                  sector_key=sector["key"],
+                                  sector_label=sector["label"],
+                                  sector_n=sector.get("priority", batch_start + 1),
+                                  sector_total=total)
+
+            # Run batch in parallel
+            tasks = [
+                self._discover_sector(
+                    sector=sector,
+                    instruction_text=instruction_text,
+                    sector_n=sector.get("priority", idx + 1),
+                    sector_total=total,
+                )
+                for idx, sector in enumerate(batch)
+            ]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            for sector, result in zip(batch, results):
+                if isinstance(result, Exception):
+                    logger.warning("[graph v5] sector '%s' failed: %s", sector["key"], result)
+                    yield self._event("sector_complete",
+                                      sector_key=sector["key"],
+                                      sector_label=sector["label"],
+                                      status="failed",
+                                      error=str(result),
+                                      entities_found=0)
+                    # Yield empty result so aggregation loop still works
+                    yield {"event": "_l1_sector_result", "data": {
+                        "sector_key": sector["key"],
+                        "administering_entities": [],
+                        "sources": [],
+                    }}
+                else:
+                    entities = result.get("administering_entities", [])
+                    sources = result.get("sources", [])
+                    yield self._event("sector_complete",
+                                      sector_key=sector["key"],
+                                      sector_label=sector["label"],
+                                      status="complete",
+                                      entities_found=len(entities),
+                                      programs_found=len(result.get("programs", [])))
+                    yield {"event": "_l1_sector_result", "data": {
+                        "sector_key": sector["key"],
+                        "administering_entities": entities,
+                        "sources": sources,
+                    }}
+
+            # Brief pause between batches to avoid rate limit spikes
+            if batch_start + sector_concurrency < total:
+                await asyncio.sleep(1.0)
+
+    async def _discover_sector(
+        self,
+        sector: dict,
+        instruction_text: str,
+        sector_n: int,
+        sector_total: int,
+    ) -> dict:
+        """Run one sector discovery call."""
+        search_hints = sector.get("search_hints", [])
+        if search_hints:
+            hints_block = "\n## Suggested search queries for this sector:\n" + "\n".join(
+                f"  - {hint}" for hint in search_hints
+            ) + "\n"
+        else:
+            hints_block = ""
+
+        sector_header = SECTOR_SCOPE_HEADER.format(
+            sector_label=sector["label"],
+            sector_n=sector_n,
+            sector_total=sector_total,
+            search_hints_block=hints_block,
+        )
+        prompt = sector_header + instruction_text
+
+        text, _citations = await asyncio.wait_for(
+            self.llm.complete_grounded([
+                {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
+                {"role": "user", "content": prompt},
+            ], max_tokens=32768),
+            timeout=300.0,
+        )
+        result = _extract_json(text)
+
+        # Tag entities with sector key for traceability
+        for entity in result.get("administering_entities", []):
+            entity.setdefault("sector_key", sector["key"])
+
+        return result
+
+    # ── L2: Per-Entity Program Expansion ─────────────────────────────────
+
+    async def _run_l2_entity_expansion(
+        self,
+        entities: list[dict],
+        instruction_text: str,
+        seed_index: dict[str, list[dict]],
+    ) -> AsyncGenerator[dict, None]:
+        """Expand each L1 entity to find its programs, yielding SSE events."""
+        total = len(entities)
+
+        for idx, entity in enumerate(entities, start=1):
+            yield self._event("entity_expansion_start",
+                              entity_id=entity.get("id", ""),
+                              entity_name=entity.get("name", ""),
+                              entity_n=idx,
+                              entity_total=total)
+            try:
+                result = await asyncio.wait_for(
+                    self._expand_entity(entity=entity, instruction_text=instruction_text),
+                    timeout=180.0,
+                )
+                programs = result.get("programs", [])
+                sources = result.get("sources", [])
+                yield self._event("entity_expansion_complete",
+                                  entity_id=entity.get("id", ""),
+                                  entity_name=entity.get("name", ""),
+                                  entity_n=idx,
+                                  entity_total=total,
+                                  programs_found=len(programs),
+                                  sources_found=len(sources))
+                yield {"event": "_l2_entity_result", "data": {
+                    "entity_id": entity.get("id", ""),
+                    "programs": programs,
+                    "sources": sources,
+                }}
+            except Exception as exc:
+                logger.warning("[graph v5] entity expansion failed for '%s': %s",
+                               entity.get("name", ""), exc)
+                yield self._event("entity_expansion_complete",
+                                  entity_id=entity.get("id", ""),
+                                  entity_name=entity.get("name", ""),
+                                  entity_n=idx,
+                                  entity_total=total,
+                                  status="failed",
+                                  error=str(exc),
+                                  programs_found=0)
+                yield {"event": "_l2_entity_result", "data": {
+                    "entity_id": entity.get("id", ""),
+                    "programs": [],
+                    "sources": [],
+                }}
+
+    async def _expand_entity(
+        self,
+        entity: dict,
+        instruction_text: str,
+    ) -> dict:
+        """Run one entity expansion call to find all programs for an entity."""
+        entity_context = (
+            f"## ENTITY EXPANSION CALL\n"
+            f"## Target entity: {entity.get('name', 'Unknown')}\n"
+            f"## Entity URL: {entity.get('url', 'unknown')}\n"
+            f"## Entity type: {entity.get('entity_type', 'unknown')}\n"
+            f"## Find ALL programs, portals, guidelines, and sub-entities for this entity only.\n"
+            f"\n---\n\n"
+        )
+        prompt = entity_context + instruction_text
+        text, _citations = await self.llm.complete_grounded([
+            {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
+            {"role": "user", "content": prompt},
+        ], max_tokens=16384)
+        return _extract_json(text)
+
+    # ── Utility: Coverage summary ─────────────────────────────────────────
+
+    def _build_coverage_summary(
+        self,
+        sectors: list[dict],
+        entities: list[dict],
+        programs: list[dict],
+    ) -> dict:
+        """Build per-sector coverage counts."""
+        summary: dict[str, dict] = {}
+        for sector in sectors:
+            key = sector["key"]
+            sector_entities = [e for e in entities if e.get("sector_key") == key]
+            sector_programs = [
+                p for p in programs
+                if any(
+                    e.get("name", "") == p.get("administering_entity", "")
+                    for e in sector_entities
+                )
+            ]
+            summary[key] = {
+                "label": sector["label"],
+                "entities_found": len(sector_entities),
+                "programs_found": len(sector_programs),
+                "gaps": [],
+            }
+        return summary
+
+    # ── Utility: SSE event builder ────────────────────────────────────────
 
     @staticmethod
     def _event(event_type: str, **data) -> dict:
         return {"event": event_type, "data": data}
+
+    # ── Utility: Name normalization ───────────────────────────────────────
 
     @staticmethod
     def _normalize_name(name: str) -> str:
@@ -508,17 +538,25 @@ class DiscoveryGraph:
 
     @staticmethod
     def _canonical_program_id(program_data: dict) -> str:
-        name = re.sub(r"[^a-z0-9]+", "-", str(program_data.get("name", "")).lower()).strip("-")
+        name = re.sub(
+            r"[^a-z0-9]+", "-", str(program_data.get("name", "")).lower()
+        ).strip("-")
         entity = re.sub(
-            r"[^a-z0-9]+", "-", str(program_data.get("administering_entity", "")).lower()
+            r"[^a-z0-9]+", "-",
+            str(program_data.get("administering_entity", "")).lower(),
         ).strip("-")
         jurisdiction = re.sub(
-            r"[^a-z0-9]+", "-", str(program_data.get("jurisdiction", "")).lower()
+            r"[^a-z0-9]+", "-",
+            str(program_data.get("jurisdiction", "")).lower(),
         ).strip("-")
-        return "-".join(part for part in [entity, name, jurisdiction] if part)[:255] or "unknown-program"
+        return (
+            "-".join(part for part in [entity, name, jurisdiction] if part)[:255]
+            or "unknown-program"
+        )
 
     @classmethod
     def _dedupe_programs(cls, programs: list[dict]) -> list[dict]:
+        """Deduplicate by canonical ID, keeping highest-confidence copy."""
         deduped: dict[str, dict] = {}
         for program in programs:
             key = cls._canonical_program_id(program)
@@ -552,7 +590,8 @@ class DiscoveryGraph:
             total = len(seeds)
             matched = sum(
                 1 for s in seeds
-                if re.sub(r"[^a-z0-9]", "", s.get("name", "").lower()) in discovered_names
+                if re.sub(r"[^a-z0-9]", "", s.get("name", "").lower())
+                in discovered_names
             )
             result[topic] = {
                 "total": total,

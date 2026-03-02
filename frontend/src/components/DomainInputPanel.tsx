@@ -10,21 +10,24 @@ const LLM_PROVIDERS = ["openai", "anthropic", "gemini"];
 const GEO_SCOPES = ["national", "state", "municipal"] as const;
 const ACCEPTED_FILE_TYPES = ".txt,.md,.pdf,.docx";
 const ACCEPTED_SEED_TYPES = ".json,.jsonl,.csv,.txt,.md";
+const ACCEPTED_SECTOR_TYPES = ".json";
 const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const SUPPORTED_SEED_EXTENSIONS = [".json", ".jsonl", ".csv", ".txt", ".md"];
 
 export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const [domain, setDomain] = useState("");
-  const [provider, setProvider] = useState("openai");
+  const [provider, setProvider] = useState("gemini");
   const [kDepth, setKDepth] = useState(2);
   const [geoScope, setGeoScope] = useState<(typeof GEO_SCOPES)[number]>("state");
   const [targetSegments, setTargetSegments] = useState("");
   const [constitutionFile, setConstitutionFile] = useState<File | null>(null);
   const [instructionFile, setInstructionFile] = useState<File | null>(null);
+  const [sectorFile, setSectorFile] = useState<File | null>(null);
   const [seedingFiles, setSeedingFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const constitutionInputRef = useRef<HTMLInputElement>(null);
   const instructionInputRef = useRef<HTMLInputElement>(null);
+  const sectorInputRef = useRef<HTMLInputElement>(null);
   const seedingInputRef = useRef<HTMLInputElement>(null);
 
   const isSupportedFile = (file: File) => {
@@ -35,6 +38,10 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const isSupportedSeedFile = (file: File) => {
     const filename = file.name.toLowerCase();
     return SUPPORTED_SEED_EXTENSIONS.some((ext) => filename.endsWith(ext));
+  };
+
+  const isSupportedSectorFile = (file: File) => {
+    return file.name.toLowerCase().endsWith(".json");
   };
 
   const handleFileSelection = (
@@ -48,6 +55,16 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
     }
     setError(null);
     setFile(file);
+  };
+
+  const handleSectorSelection = (file: File | null) => {
+    if (!file) return;
+    if (!isSupportedSectorFile(file)) {
+      setError("Sector file must be a .json file.");
+      return;
+    }
+    setError(null);
+    setSectorFile(file);
   };
 
   const handleSeedingSelection = (files: FileList | null) => {
@@ -73,7 +90,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
 
     try {
       const formData = new FormData();
-      formData.append("domain_description", domain.trim());
+      formData.append("manifest_name", domain.trim());
       formData.append("llm_provider", provider);
       formData.append("k_depth", String(kDepth));
       formData.append("geo_scope", geoScope);
@@ -82,6 +99,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
       }
       if (constitutionFile) formData.append("constitution_file", constitutionFile);
       if (instructionFile) formData.append("instruction_file", instructionFile);
+      if (sectorFile) formData.append("sector_file", sectorFile);
       seedingFiles.forEach((file) => formData.append("seeding_files", file));
 
       const response = await fetch("/api/manifests/generate", {
@@ -103,7 +121,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
         <textarea
           value={domain}
           onChange={(e) => setDomain(e.target.value)}
-          placeholder="Describe the regulatory domain to discover (e.g., 'All US Insurance regulation — federal + all 50 states')"
+          placeholder="Manifest name / label (e.g., 'DPA National Scan March 2026')"
           rows={4}
           disabled={isGenerating}
         />
@@ -168,6 +186,41 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
                 Clear
               </button>
             </span>
+          )}
+        </div>
+
+        <div className="upload-row">
+          <input
+            ref={sectorInputRef}
+            type="file"
+            aria-label="Sector config file upload"
+            accept={ACCEPTED_SECTOR_TYPES}
+            hidden
+            onChange={(e) => handleSectorSelection(e.target.files?.[0] ?? null)}
+            disabled={isGenerating}
+          />
+          <button
+            type="button"
+            onClick={() => sectorInputRef.current?.click()}
+            disabled={isGenerating}
+          >
+            Upload Sector Config
+          </button>
+          {sectorFile && (
+            <span className="upload-filename">
+              {sectorFile.name}
+              <button
+                type="button"
+                className="btn-sm"
+                onClick={() => setSectorFile(null)}
+                disabled={isGenerating}
+              >
+                Clear
+              </button>
+            </span>
+          )}
+          {!sectorFile && (
+            <span className="upload-hint">optional — uses default 6-sector list if omitted</span>
           )}
         </div>
 

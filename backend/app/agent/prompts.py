@@ -14,9 +14,41 @@ Important rules:
 - Be explicit about gaps — it's better to identify a gap than to fabricate a source
 """
 
+# Used by V2 flat pipeline (discovery.py) — kept for backward compatibility
 GUIDANCE_CONTEXT_BLOCK = """
 Additional guidance documents:
 {guidance_context}
+"""
+
+# ---------------------------------------------------------------------------
+# V4 Prompt-Driven Discovery — Engine Prompts
+# ---------------------------------------------------------------------------
+
+L0_ORCHESTRATOR_SYSTEM = """You are a web-grounded discovery agent. Execute the methodology \
+in the user message exactly as specified.
+
+Use your web search capability to discover real, current entities, programs, and source \
+documents with verified URLs. Do not rely on training data alone for URLs.
+
+Produce ONLY valid JSON matching the output schema in the user message.
+Assign honest confidence scores. Flag anything uncertain with needs_human_review: true.
+"""
+
+L0_JSON_SCHEMA_SUFFIX = """\
+## Execution Instructions
+
+Use web search grounding to verify all entities, URLs, and programs you discover.
+
+Return ONLY the JSON object described in the Output Schema section above (Section 8).
+Do not include any prose, markdown fences, or explanation outside the JSON.
+The JSON must be parseable as-is — no trailing commas, no comments.
+
+Rules:
+- Every URL must be verified via web search — do NOT hallucinate URLs
+- Assign confidence < 0.5 and needs_human_review: true for anything you cannot directly confirm
+- Set verification_state: "candidate_only" for items found only via third-party indexes
+- Include ALL items you discover — nothing is silently dropped
+- For source files (PDFs, DOCs): include the direct file link, not just the hosting page
 """
 
 LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify ALL relevant
@@ -266,140 +298,113 @@ Do not include duplicate programs that differ only by punctuation/case."""
 
 
 # ---------------------------------------------------------------------------
-# Hierarchical Graph Discovery (V3) — Level-Aware Prompts
+# Hierarchical Graph Discovery (V4) — Data-Driven Level Prompts
 # ---------------------------------------------------------------------------
 
-GROUNDED_LANDSCAPE_MAPPER_PROMPT = """Analyze the following regulatory domain and identify ALL relevant
-regulatory bodies organized by jurisdiction level. USE YOUR WEB SEARCH CAPABILITY to find CURRENT,
-real entities and their actual websites. Do not rely on training data alone.
+L1_ENTITY_EXPANSION_PROMPT = """For the following entities, find ALL child programs, source documents,
+application portals, and sub-entities. USE YOUR WEB SEARCH CAPABILITY to find real, current information.
 
-Domain: {domain_description}
-{guidance_block}
+Entities to expand:
+{entities_json}
 
-CRITICAL INSTRUCTIONS:
-- Use web search to verify each entity exists and find its CURRENT official website URL.
-- You MUST enumerate EVERY relevant body individually. Do NOT summarize or group them.
-- Include all federal agencies, state housing finance agencies, national associations,
-  self-regulatory organizations, and industry bodies relevant to this domain.
-- Every URL must be verified via web search — do NOT guess or hallucinate URLs.
-
-Return a JSON object with this structure:
-{{
-  "regulatory_bodies": [
-    {{
-      "id": "short-kebab-case-id",
-      "name": "Full Official Name",
-      "jurisdiction": "federal|state|municipal",
-      "authority_type": "regulator|gse|sro|industry_body",
-      "url": "https://verified-official-website",
-      "governs": ["area1", "area2"]
-    }}
-  ],
-  "jurisdiction_hierarchy": {{
-    "federal": {{"bodies": ["id1", "id2"], "count": 0}},
-    "state": {{"bodies": ["id3"], "count": 0}},
-    "municipal": {{"bodies": [], "count": 0}}
-  }}
-}}
-
-You MUST list every single body with verified URLs."""
-
-GROUNDED_SOURCE_HUNTER_PROMPT = """For each of the following regulatory bodies, discover specific
-regulatory source documents. USE YOUR WEB SEARCH CAPABILITY to find REAL, CURRENT documents
-with verified URLs.
-
-Regulatory bodies:
-{bodies_json}
-{guidance_block}
-
-For each body, use web search to find at least 2-4 key source documents.
-
-CRITICAL RULES:
-- Every URL MUST be verified via web search — no hallucinated URLs.
-- Prefer direct, crawlable official program pages over summary pages.
-
-For each source, provide:
-{{
-  "id": "src-NNN",
-  "name": "Document name",
-  "regulatory_body": "body-id",
-  "type": "statute|regulation|guidance|standard|educational|guide",
-  "format": "html|pdf|legal_xml|api|structured_data",
-  "authority": "binding|advisory|informational",
-  "jurisdiction": "federal|state|municipal",
-  "url": "https://verified-specific-document-url",
-  "access_method": "scrape|download|api|manual",
-  "confidence": 0.0-1.0,
-  "needs_human_review": true/false
-}}
-
-Return a JSON object: {{"sources": [...]}}
-
-Number source IDs sequentially starting from src-{start_id:03d}."""
-
-L1_ENTITY_EXPANSION_PROMPT = """Expand the discovery graph for a specific entity type.
-USE YOUR WEB SEARCH CAPABILITY to find real entities and programs.
-
-Parent entity: {parent_entity_name} ({parent_entity_type})
-Entity type to discover: {target_entity_type}
 Geographic scope: {geo_scope}
-{guidance_block}
 
-Seed programs for this category (use as search hints):
+Seed programs as search hints (use to guide discovery, not as final output):
 {seed_hints_json}
 
-Search queries to use (execute via web search):
-{search_queries}
+Programs already discovered (do NOT duplicate these):
+{known_program_names_json}
 
-Return a JSON object:
+INSTRUCTIONS:
+- For each entity, search for all programs and products it administers
+- Find source documents: guidelines PDFs, application portals, eligibility fact sheets
+- Capture direct file links (PDF/DOC) where available — not just the generic hosting page
+- Find application intake portals (Neighborly, Submittable, or equivalent) as direct apply URLs
+- Identify sub-entities and subrecipients that administer programs on behalf of the entity
+
+Return JSON with sources and programs found across ALL entities in this batch:
 {{
-  "entities": [
+  "sources": [
     {{
-      "id": "entity-kebab-case-id",
-      "name": "Entity Name",
-      "type": "{target_entity_type}",
-      "url": "https://verified-url",
+      "id": "src-{source_id_start:03d}",
+      "name": "Document or page name",
+      "regulatory_body": "entity-id-from-input",
+      "type": "statute|regulation|guidance|standard|educational|guide",
+      "format": "html|pdf|legal_xml|api|structured_data",
+      "authority": "binding|advisory|informational",
       "jurisdiction": "federal|state|municipal",
-      "programs": [
-        {{
-          "name": "Program Name",
-          "administering_entity": "Entity Name",
-          "geo_scope": "national|state|county|city|tribal",
-          "jurisdiction": "jurisdiction text",
-          "benefits": "summary",
-          "eligibility": "summary",
-          "status": "active|verification_pending",
-          "evidence_snippet": "text from web source",
-          "source_urls": ["https://verified-url"],
-          "confidence": 0.0-1.0,
-          "needs_human_review": false
-        }}
-      ]
+      "url": "https://verified-direct-url",
+      "access_method": "scrape|download|api|manual",
+      "confidence": 0.0,
+      "needs_human_review": false,
+      "verification_state": "verified|candidate_only|verification_pending"
+    }}
+  ],
+  "programs": [
+    {{
+      "name": "Program Name",
+      "administering_entity": "Full Entity Name",
+      "geo_scope": "national|state|county|city|tribal",
+      "jurisdiction": "optional jurisdiction text",
+      "benefits": "brief description",
+      "eligibility": "brief description",
+      "status": "active|paused|closed|verification_pending",
+      "evidence_snippet": "quoted text from web source",
+      "source_urls": ["https://verified-url"],
+      "confidence": 0.0,
+      "needs_human_review": false,
+      "verification_state": "verified|candidate_only|verification_pending"
     }}
   ]
 }}"""
 
-L3_GAP_FILL_PROMPT = """Fill coverage gaps in a DPA discovery run.
-USE YOUR WEB SEARCH CAPABILITY to find real programs for underrepresented categories.
+L2_VERIFICATION_PROMPT = """Verify the following programs via web search.
+For each program, search for the current official program page and confirm or update information.
 
-Domain: {domain_description}
+Programs to verify:
+{programs_json}
+
+INSTRUCTIONS:
+- For each program, use web search to find the current official page
+- If found on official entity domain: set confidence >= 0.7, verification_state = "verified"
+- If found only on third-party index: set verification_state = "candidate_only", confidence <= 0.4
+- If not found at all: set confidence < 0.3, needs_human_review = true
+- Update source_urls with any verified URLs found
+
+Return JSON:
+{{
+  "verifications": [
+    {{
+      "name": "exact program name from input",
+      "administering_entity": "exact entity from input",
+      "confidence": 0.0,
+      "needs_human_review": false,
+      "verification_state": "verified|candidate_only|verification_pending",
+      "source_urls": ["https://verified-url"],
+      "evidence_snippet": "quoted text from web source or empty string"
+    }}
+  ]
+}}"""
+
+L3_GAP_FILL_PROMPT = """Fill coverage gaps in a discovery run.
+USE YOUR WEB SEARCH CAPABILITY to find real programs for unmatched seeds and underrepresented categories.
+
 Geographic scope: {geo_scope}
-{guidance_block}
-
 Programs already discovered: {discovered_count}
 
-Unmatched seed programs (NOT found in L0-L2):
+Unmatched seed programs (NOT yet found — search for these specifically):
 {unmatched_seeds_json}
 
-Underrepresented categories:
+Underrepresented entity categories (search for programs in these sectors):
 {gap_categories_json}
 
 INSTRUCTIONS:
-- For each unmatched seed, use web search to find the actual program page.
-- Only return programs verified via web search with at least one source URL.
-- Do NOT duplicate programs already discovered.
+- For each unmatched seed, use web search to find the actual program page
+- For each gap category, find representative programs in that sector
+- Only return programs with at least one verified source URL
+- Do NOT duplicate programs already in the discovery run
 
-Return a JSON object:
+Return JSON:
 {{
   "programs": [
     {{
@@ -410,15 +415,13 @@ Return a JSON object:
       "benefits": "summary",
       "eligibility": "summary",
       "status": "active|verification_pending",
-      "evidence_snippet": "text from web source",
+      "evidence_snippet": "quoted text from web source",
       "source_urls": ["https://verified-url"],
       "provenance_links": {{
-        "seed_file": "optional",
-        "seed_row": "optional",
         "source_ids": [],
         "discovery_level": "L3"
       }},
-      "confidence": 0.0-1.0,
+      "confidence": 0.0,
       "needs_human_review": false
     }}
   ],
@@ -428,3 +431,33 @@ Return a JSON object:
     "categories_searched": []
   }}
 }}"""
+
+
+# ---------------------------------------------------------------------------
+# V5 BFS Engine — Domain-Agnostic Sector Scope Header
+# ---------------------------------------------------------------------------
+# This is the ONLY engine-generated prompt fragment in V5.
+# All domain methodology, output schema, and search behavior comes from the
+# instruction file uploaded by the user. The engine prepends only this header
+# to focus each sector call's AFC search budget on one sector at a time.
+
+SECTOR_SCOPE_HEADER = """\
+## SECTOR SCOPE FOR THIS CALL: {sector_label} (sector {sector_n} of {sector_total})
+## Search budget: 64 searches — spend ALL searches on this sector only
+## Do NOT discover entities from other sectors (those are running in parallel calls)
+{search_hints_block}
+---
+
+"""
+
+# Default sector list used when no sector file is uploaded.
+# Keys map to AuthorityType enum values in models/manifest.py.
+DEFAULT_SECTORS: list[dict] = [
+    {"key": "federal",   "label": "Federal/National",     "priority": 1, "search_hints": []},
+    {"key": "state_hfa", "label": "State HFA",            "priority": 2, "search_hints": []},
+    {"key": "employer",  "label": "Employer/Industry",    "priority": 3, "search_hints": []},
+    {"key": "nonprofit", "label": "Nonprofit/CDFI",       "priority": 4, "search_hints": []},
+    {"key": "tribal",    "label": "Tribal",               "priority": 5, "search_hints": []},
+    {"key": "municipal", "label": "Municipal/County/PHA", "priority": 6, "search_hints": []},
+]
+

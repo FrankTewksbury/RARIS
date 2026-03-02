@@ -1,7 +1,7 @@
 # Active Context
 
-- Updated: 2026-03-01
-- Current focus: DPA V3 Hierarchical Discovery — build complete
+- Updated: 2026-03-02
+- Current focus: DPA V4 Prompt-Driven Discovery — **BUILD COMPLETE** (306 tests passing)
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
 
@@ -65,7 +65,7 @@ POST /api/manifests/generate  (discovery_mode=hierarchical)
 
 ## Test Counts
 
-- **Backend**: 298 tests across 23 test files — all passing
+- **Backend**: 306 tests across 25 test files — all passing
 - **Frontend**: 16 tests across 8 test files — all passing
 - **Linting**: Ruff clean, TypeScript clean, ESLint clean
 
@@ -83,11 +83,56 @@ POST /api/manifests/generate  (discovery_mode=hierarchical)
 | CI | GitHub Actions (lint, format, typecheck, test, Docker build) |
 | Containers | Docker multi-stage builds, docker-compose + prod overlay |
 
+## DPA V4 Prompt-Driven Discovery — BUILD COMPLETE
+
+V3 hierarchical discovery had a fundamental **prompt-algorithm mismatch**: the engine used generic prompts while `DPA_Prompt_v4.md` contained rich domain methodology buried as passive context. Result: 15 programs with 0 sources.
+
+**V4 architecture** (built in session S20260302_1400):
+- `domain_description` renamed to `manifest_name` (just a label)
+- Uploaded instruction prompt drives L0 discovery directly (full text, not truncated)
+- L1-L3 recursion is data-driven (from L0 output, not from original prompt)
+- Low-confidence items preserved with `needs_human_review: true` flag
+- Base instruction template created (`docs/005-doc-base-instruction-template.md`)
+- DPA_Prompt_v5 rewritten from v4 following the template
+
+**Key fix:** `MockLLM` in tests was routing L0 to the L2 verification branch because the L0 execution instructions contain "verify". Fixed by narrowing the routing condition to `"programs to verify"` (unique to the L2 prompt).
+
+**Final state:** 306 tests across 25 test files — all passing.
+
+## V5 Graph BFS Engine — BUILD COMPLETE
+
+V5 domain-agnostic BFS engine built in session S20260302_1430:
+
+**Architecture:** 6 parallel sector calls (default, configurable via uploaded JSON) each receiving full instruction_text prefixed by a 3-line SECTOR SCOPE header. All domain expertise lives in the uploaded instruction file — zero domain content in engine code.
+
+**Key changes:**
+- `discovery_mode` (`flat`/`hierarchical`) removed entirely — always hierarchical BFS
+- `geo_target` removed — engine is domain-agnostic; geo placeholders filled by user in instruction file
+- Sector file upload slot added to UI and router (`_parse_sector_upload()`)
+- `SECTOR_SCOPE_HEADER` + `DEFAULT_SECTORS` added to `prompts.py` (domain-agnostic only)
+- `graph_discovery.py` fully rewritten: `_run_l1_sectors`, `_expand_entity`, `_run_l2_entity_expansion`
+- New SSE events: `sector_start`, `sector_complete`, `l1_assembly_complete`, `entity_expansion_start`, `entity_expansion_complete`
+- `DPA_Prompt_v7.md` (instruction file) + `DPA_Sectors_v1.json` (sector config) created
+- All tests updated to V5 event shape — 311 tests passing
+
+**Files modified:**
+- `backend/app/schemas/manifest.py` — removed `discovery_mode` + `geo_target`
+- `backend/app/routers/manifests.py` — removed discovery_mode branch, added `_parse_sector_upload()`
+- `backend/app/agent/prompts.py` — added `SECTOR_SCOPE_HEADER` + `DEFAULT_SECTORS`
+- `backend/app/agent/graph_discovery.py` — full V5 rewrite
+- `frontend/src/components/DomainInputPanel.tsx` — removed discovery_mode, added sector file upload
+- `backend/tests/test_graph_discovery.py` — rewritten for V5 event shapes
+- `backend/tests/test_graph_discovery_v4.py` — updated to V5 mock format + event names
+- `backend/tests/test_manifest_schema.py` — removed discovery_mode assertions
+- `prompts/DPA_Prompt_v7.md` — new instruction file
+- `prompts/DPA_Sectors_v1.json` — new sector config
+
 ## What's Next
 
-- Live integration test: run `discovery_mode=hierarchical` against Gemini with real seed file
-- Evaluate seed recovery rate (target: 50%+ vs 2% in V2 flat mode)
-- Frontend: surface `discovery_level` and per-topic match rates in results panel
+- [ ] First live test run with k_depth=1 (6 sector_start/sector_complete SSE events visible)
+- [ ] First live test run with k_depth=2 (entity expansion + programs populated)
+- [ ] Upload `DPA_Sectors_v1.json` + `DPA_Prompt_v7.md` via UI and validate end-to-end
+- [ ] AuthorityType DB migration (new enum values: state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal)
 
 ### Remaining Gaps (Deferred)
 

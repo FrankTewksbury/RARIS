@@ -7,12 +7,11 @@ from app.config import settings
 
 
 class GenerateManifestRequest(BaseModel):
-    domain_description: str
+    manifest_name: str
     llm_provider: str = settings.llm_provider
     k_depth: int = Field(default=2, ge=1, le=4)
     geo_scope: Literal["national", "state", "municipal"] = "state"
     target_segments: list[str] = []
-    discovery_mode: Literal["flat", "hierarchical"] = "flat"
 
 
 class GenerateManifestResponse(BaseModel):

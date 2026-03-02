@@ -1,19 +1,24 @@
-"""Tests for hierarchical graph discovery engine (DiscoveryGraph)."""
+"""Tests for graph discovery engine (DiscoveryGraph) — V5 BFS."""
 
 import json
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-from app.agent.graph_discovery import DiscoveryGraph, _SEED_TO_ENTITY_TYPE, _ENTITY_SEARCH_QUERIES
+from app.agent.graph_discovery import DiscoveryGraph, _SEED_TO_ENTITY_TYPE
 from app.llm.base import Citation, LLMProvider
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# MockLLM — V5 routing
 # ---------------------------------------------------------------------------
 
 class MockLLM(LLMProvider):
-    """Mock LLM that returns canned JSON responses."""
+    """Mock LLM that returns canned JSON responses for V5 BFS engine.
+
+    Routing logic:
+    - SECTOR SCOPE header → sector discovery call → returns administering_entities[]
+    - ENTITY EXPANSION CALL header → entity expansion call → returns programs[]
+    """
 
     def __init__(self, responses: dict[str, str] | None = None):
         self._responses = responses or {}
@@ -30,97 +35,72 @@ class MockLLM(LLMProvider):
     async def complete_grounded(self, messages, **kwargs):
         self._call_count += 1
         prompt = messages[-1]["content"] if messages else ""
-        self.grounded_calls.append({"prompt": prompt[:200], "kwargs": kwargs})
+        self.grounded_calls.append({"prompt": prompt[:300], "kwargs": kwargs})
 
-        # Determine which response to return based on prompt content
-        if "regulatory domain" in prompt.lower() or "landscape" in prompt.lower():
-            text = self._responses.get("landscape", json.dumps({
-                "regulatory_bodies": [
+        if "entity expansion call" in prompt.lower():
+            # L2 entity expansion — return programs for this entity
+            text = self._responses.get("expansion", json.dumps({
+                "programs": [
                     {
-                        "id": "hud",
-                        "name": "HUD",
-                        "jurisdiction": "federal",
-                        "authority_type": "regulator",
-                        "url": "https://hud.gov",
-                        "governs": ["housing"],
+                        "name": "Example DPA Program",
+                        "administering_entity": "Example Entity",
+                        "geo_scope": "state",
+                        "jurisdiction": "California",
+                        "benefits": "Up to $10,000 forgivable loan",
+                        "eligibility": "First-time homebuyers",
+                        "status": "active",
+                        "evidence_snippet": "Found via official entity page",
+                        "source_urls": ["https://example-entity.gov/dpa"],
+                        "confidence": 0.85,
+                        "needs_human_review": False,
                     }
                 ],
-                "jurisdiction_hierarchy": {
-                    "federal": {"bodies": ["hud"], "count": 1},
-                    "state": {"bodies": [], "count": 0},
-                    "municipal": {"bodies": [], "count": 0},
-                },
-            }))
-        elif "source documents" in prompt.lower() or "source hunter" in prompt.lower():
-            text = self._responses.get("sources", json.dumps({
                 "sources": [
                     {
-                        "id": "src-001",
-                        "name": "HUD DPA Guide",
-                        "regulatory_body": "hud",
+                        "id": "src-l2-001",
+                        "name": "Entity Program Page",
+                        "regulatory_body": "example-entity",
                         "type": "guidance",
                         "format": "html",
                         "authority": "informational",
-                        "jurisdiction": "federal",
-                        "url": "https://hud.gov/dpa",
+                        "jurisdiction": "state",
+                        "url": "https://example-entity.gov/dpa",
                         "access_method": "scrape",
-                        "confidence": 0.9,
+                        "confidence": 0.85,
                         "needs_human_review": False,
                     }
-                ]
-            }))
-        elif "entity type" in prompt.lower() or "expand" in prompt.lower():
-            text = self._responses.get("expansion", json.dumps({
-                "entities": [
-                    {
-                        "id": "cdfi-example",
-                        "name": "Example CDFI",
-                        "type": "nonprofit",
-                        "url": "https://example-cdfi.org",
-                        "jurisdiction": "state",
-                        "programs": [
-                            {
-                                "name": "CDFI DPA Grant",
-                                "administering_entity": "Example CDFI",
-                                "geo_scope": "state",
-                                "jurisdiction": "California",
-                                "benefits": "Up to $10,000 grant",
-                                "eligibility": "LMI households",
-                                "status": "active",
-                                "evidence_snippet": "CDFI grant program",
-                                "source_urls": ["https://example-cdfi.org/dpa"],
-                                "confidence": 0.8,
-                                "needs_human_review": False,
-                            }
-                        ],
-                    }
-                ]
-            }))
-        elif "gap" in prompt.lower() or "unmatched" in prompt.lower():
-            text = self._responses.get("gap_fill", json.dumps({
-                "programs": [
-                    {
-                        "name": "Gap Fill Program",
-                        "administering_entity": "Gap Fill Entity",
-                        "geo_scope": "state",
-                        "jurisdiction": "Texas",
-                        "benefits": "Forgivable loan",
-                        "eligibility": "FTHB",
-                        "status": "active",
-                        "evidence_snippet": "Found via web search",
-                        "source_urls": ["https://gapfill.gov"],
-                        "confidence": 0.7,
-                        "needs_human_review": True,
-                    }
                 ],
-                "gap_fill_summary": {
-                    "seeds_recovered": 1,
-                    "new_programs_found": 1,
-                    "categories_searched": ["municipal"],
-                },
             }))
         else:
-            text = '{"programs": []}'
+            # L1 sector discovery — return administering_entities[]
+            text = self._responses.get("sector", json.dumps({
+                "sector_key": "federal",
+                "coverage_summary": {
+                    "entities_found": 1,
+                    "programs_found": 0,
+                    "gaps": [],
+                },
+                "administering_entities": [
+                    {
+                        "id": "hud",
+                        "name": "HUD",
+                        "entity_type": "federal",
+                        "jurisdiction": "federal",
+                        "url": "https://hud.gov",
+                        "governs": ["housing"],
+                        "confidence": 0.95,
+                        "needs_human_review": False,
+                        "verification_state": "verified",
+                    }
+                ],
+                "programs": [],
+                "funding_streams": [],
+                "queue_state": {
+                    "visited_entities": ["hud"],
+                    "visited_sources": ["https://hud.gov"],
+                    "next_actions": [],
+                },
+            }))
 
         citations = [Citation(url="https://hud.gov", title="HUD")]
         return text, citations
@@ -134,9 +114,9 @@ def mock_db():
     db.flush = AsyncMock()
     db.commit = AsyncMock()
 
-    # Mock manifest retrieval
     mock_manifest = MagicMock()
     mock_manifest.jurisdiction_hierarchy = None
+    mock_manifest.coverage_summary = None
     mock_manifest.status = None
     mock_manifest.completeness_score = None
     db.get = AsyncMock(return_value=mock_manifest)
@@ -145,7 +125,7 @@ def mock_db():
 
 
 # ---------------------------------------------------------------------------
-# Tests
+# Tests: Instantiation
 # ---------------------------------------------------------------------------
 
 class TestDiscoveryGraphInit:
@@ -155,216 +135,267 @@ class TestDiscoveryGraphInit:
         assert graph.manifest_id == "test-001"
 
 
-class TestDiscoveryGraphRun:
+# ---------------------------------------------------------------------------
+# Tests: V5 SSE event structure
+# ---------------------------------------------------------------------------
+
+class TestDiscoveryGraphV5Events:
     @pytest.mark.asyncio
-    async def test_full_run_yields_events(self, mock_db):
-        """Full L0-L3 run yields expected SSE events."""
+    async def test_run_emits_sector_start_events(self, mock_db):
+        """k_depth=1 run emits sector_start for each sector."""
         llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-001")
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-001")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1):
+            events.append(event)
+
+        sector_starts = [e for e in events if e["event"] == "sector_start"]
+        assert len(sector_starts) == 6  # default 6 sectors
+
+    @pytest.mark.asyncio
+    async def test_run_emits_sector_complete_events(self, mock_db):
+        """k_depth=1 run emits sector_complete for each sector."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-002")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1):
+            events.append(event)
+
+        sector_completes = [e for e in events if e["event"] == "sector_complete"]
+        assert len(sector_completes) == 6
+
+    @pytest.mark.asyncio
+    async def test_run_emits_l1_assembly_complete(self, mock_db):
+        """k_depth=1 run emits l1_assembly_complete after all sectors."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-003")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1):
+            events.append(event)
+
+        assembly_events = [e for e in events if e["event"] == "l1_assembly_complete"]
+        assert len(assembly_events) == 1
+        assert "total_entities" in assembly_events[0]["data"]
+        assert "sector_count" in assembly_events[0]["data"]
+
+    @pytest.mark.asyncio
+    async def test_run_ends_with_complete_event(self, mock_db):
+        """Every run ends with a complete event."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-004")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1):
+            events.append(event)
+
+        complete_events = [e for e in events if e["event"] == "complete"]
+        assert len(complete_events) == 1
+        assert "coverage_summary" in complete_events[0]["data"]
+
+    @pytest.mark.asyncio
+    async def test_k_depth_2_emits_entity_expansion_events(self, mock_db):
+        """k_depth=2 run emits entity_expansion_start and entity_expansion_complete."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-005")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=2):
+            events.append(event)
+
+        expansion_starts = [e for e in events if e["event"] == "entity_expansion_start"]
+        expansion_completes = [e for e in events if e["event"] == "entity_expansion_complete"]
+
+        # Each sector returns 1 entity × 6 sectors = 6 entities → 6 expansion calls
+        assert len(expansion_starts) >= 1
+        assert len(expansion_completes) >= 1
+        assert len(expansion_starts) == len(expansion_completes)
+
+    @pytest.mark.asyncio
+    async def test_k_depth_1_skips_expansion(self, mock_db):
+        """k_depth=1 run does NOT emit entity_expansion events."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-006")
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1):
+            events.append(event)
+
+        expansion_events = [
+            e for e in events
+            if e["event"] in ("entity_expansion_start", "entity_expansion_complete")
+        ]
+        assert len(expansion_events) == 0
+
+    @pytest.mark.asyncio
+    async def test_custom_sector_list(self, mock_db):
+        """Custom sector list (2 sectors) produces exactly 2 sector calls."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-007")
+
+        custom_sectors = [
+            {"key": "federal", "label": "Federal/National", "priority": 1, "search_hints": []},
+            {"key": "state_hfa", "label": "State HFA", "priority": 2, "search_hints": []},
+        ]
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+            events.append(event)
+
+        sector_starts = [e for e in events if e["event"] == "sector_start"]
+        assert len(sector_starts) == 2
+
+    @pytest.mark.asyncio
+    async def test_sector_failure_does_not_abort(self, mock_db):
+        """A failing sector call yields sector_complete with status=failed but run continues."""
+        call_count = 0
+
+        class FailOnFirstCallLLM(LLMProvider):
+            async def complete(self, messages, **kwargs):
+                return '{}'
+
+            async def stream(self, messages, **kwargs):
+                yield '{}'
+
+            async def complete_grounded(self, messages, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise RuntimeError("Simulated API error")
+                return json.dumps({
+                    "administering_entities": [],
+                    "programs": [],
+                    "funding_streams": [],
+                    "queue_state": {"visited_entities": [], "visited_sources": [], "next_actions": []},
+                }), []
+
+        llm = FailOnFirstCallLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-008")
+
+        custom_sectors = [
+            {"key": "federal", "label": "Federal", "priority": 1, "search_hints": []},
+            {"key": "state_hfa", "label": "State HFA", "priority": 2, "search_hints": []},
+            {"key": "municipal", "label": "Municipal", "priority": 3, "search_hints": []},
+        ]
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+            events.append(event)
+
+        # All 3 sectors should complete (one with failed status)
+        sector_completes = [e for e in events if e["event"] == "sector_complete"]
+        assert len(sector_completes) == 3
+
+        failed = [e for e in sector_completes if e["data"].get("status") == "failed"]
+        assert len(failed) == 1
+
+        # Run still reaches complete
+        assert any(e["event"] == "complete" for e in events)
+
+    @pytest.mark.asyncio
+    async def test_complete_event_has_seed_metrics(self, mock_db):
+        """complete event includes seed_recovery_rate and seed_match_rate_by_topic."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-009")
 
         events = []
         async for event in graph.run(
-            "Down payment assistance programs in the US",
-            seed_index={"cdfi": [{"name": "CDFI Program", "program_type": "cdfi"}]},
-            seed_programs=[{"name": "CDFI Program", "program_type": "cdfi"}],
-        ):
-            events.append(event)
-
-        event_types = [e["event"] for e in events]
-        assert "step" in event_types
-        assert "complete" in event_types
-
-        # Check that complete event has required fields
-        complete_event = [e for e in events if e["event"] == "complete"][0]
-        assert "total_sources" in complete_event["data"]
-        assert "total_programs" in complete_event["data"]
-        assert "seed_recovery_rate" in complete_event["data"]
-        assert "seed_match_rate_by_topic" in complete_event["data"]
-
-    @pytest.mark.asyncio
-    async def test_discovery_levels_in_events(self, mock_db):
-        """Events include discovery_level field."""
-        llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-002")
-
-        events = []
-        async for event in graph.run("DPA programs"):
-            events.append(event)
-
-        step_events = [e for e in events if e["event"] == "step"]
-        levels_seen = set()
-        for e in step_events:
-            if "discovery_level" in e["data"]:
-                levels_seen.add(e["data"]["discovery_level"])
-
-        assert 0 in levels_seen  # L0
-        assert 1 in levels_seen  # L1
-        assert 2 in levels_seen  # L2
-        assert 3 in levels_seen  # L3
-
-    @pytest.mark.asyncio
-    async def test_cumulative_programs_in_step_events(self, mock_db):
-        """Step events include cumulative_programs for progress tracking."""
-        llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-1")
-
-        events = []
-        async for event in graph.run(
-            "DPA programs",
-            seed_index={"cdfi": [{"name": "CDFI Program"}]},
-            seed_programs=[{"name": "CDFI Program"}],
-        ):
-            events.append(event)
-
-        # All completed step events should have cumulative_programs
-        completed_steps = [
-            e for e in events
-            if e["event"] == "step" and e["data"].get("status") == "complete"
-        ]
-        for step in completed_steps:
-            assert "cumulative_programs" in step["data"], (
-                f"Step {step['data'].get('step')} missing cumulative_programs"
-            )
-
-    @pytest.mark.asyncio
-    async def test_nodes_at_level_in_step_events(self, mock_db):
-        """L0 landscape and L1 expansion emit nodes_at_level."""
-        llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-2")
-
-        events = []
-        async for event in graph.run("DPA programs"):
-            events.append(event)
-
-        # L0 landscape complete should have nodes_at_level
-        l0_landscape = [
-            e for e in events
-            if e["event"] == "step"
-            and e["data"].get("step") == "L0_landscape"
-            and e["data"].get("status") == "complete"
-        ]
-        assert len(l0_landscape) == 1
-        assert "nodes_at_level" in l0_landscape[0]["data"]
-        assert l0_landscape[0]["data"]["nodes_at_level"] >= 1
-
-        # L1 expansion complete should have nodes_at_level
-        l1_complete = [
-            e for e in events
-            if e["event"] == "step"
-            and e["data"].get("step") == "L1_expansion"
-            and e["data"].get("status") == "complete"
-        ]
-        assert len(l1_complete) == 1
-        assert "nodes_at_level" in l1_complete[0]["data"]
-
-    @pytest.mark.asyncio
-    async def test_seed_match_rate_by_topic_structure(self, mock_db):
-        """Complete event seed_match_rate_by_topic has correct structure."""
-        llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-metrics-3")
-
-        events = []
-        async for event in graph.run(
-            "DPA programs",
-            seed_index={
-                "cdfi": [{"name": "CDFI Program"}],
-                "veteran": [{"name": "VA DPA"}],
-            },
-            seed_programs=[
-                {"name": "CDFI Program", "program_type": "cdfi"},
-                {"name": "VA DPA", "program_type": "veteran"},
-            ],
+            "Test manifest",
+            k_depth=2,
+            seed_index={"cdfi": [{"name": "CDFI Grant"}]},
+            seed_programs=[{"name": "CDFI Grant", "program_type": "cdfi"}],
         ):
             events.append(event)
 
         complete = [e for e in events if e["event"] == "complete"][0]
-        rates = complete["data"]["seed_match_rate_by_topic"]
-        assert isinstance(rates, dict)
-        # Both seed topics should appear
-        assert "cdfi" in rates
-        assert "veteran" in rates
-        # Rates are floats between 0 and 1
-        for topic, rate in rates.items():
-            assert 0.0 <= rate <= 1.0
+        assert "seed_recovery_rate" in complete["data"]
+        assert "seed_match_rate_by_topic" in complete["data"]
 
     @pytest.mark.asyncio
     async def test_uses_grounded_calls(self, mock_db):
-        """Verify that grounded (web search) LLM calls are used."""
+        """Engine uses complete_grounded for all LLM calls."""
         llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-003")
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-010")
 
-        async for _ in graph.run("DPA programs"):
+        async for _ in graph.run("Test manifest", k_depth=1):
             pass
 
-        # At minimum: L0 landscape + L0 source hunter + L1 expansions
-        assert len(llm.grounded_calls) >= 2
+        assert len(llm.grounded_calls) >= 6  # at least 6 sector calls
 
     @pytest.mark.asyncio
-    async def test_seed_index_routing(self, mock_db):
-        """Seeds are routed to the correct entity types for expansion."""
+    async def test_sector_scope_header_injected(self, mock_db):
+        """Each sector call prompt contains the SECTOR SCOPE header."""
         llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-004")
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-011")
 
-        seed_index = {
-            "cdfi": [{"name": "CDFI Grant", "program_type": "cdfi"}],
-            "veteran": [{"name": "VA Grant", "program_type": "veteran"}],
-        }
-
-        async for _ in graph.run(
-            "DPA programs",
-            seed_index=seed_index,
-            seed_programs=[
-                {"name": "CDFI Grant", "program_type": "cdfi"},
-                {"name": "VA Grant", "program_type": "veteran"},
-            ],
-        ):
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_text="MY INSTRUCTION"):
             pass
 
-        # L1 expansion should have been called for entity types
-        expansion_calls = [
+        sector_calls = [
             c for c in llm.grounded_calls
-            if "entity type" in c["prompt"].lower() or "expand" in c["prompt"].lower()
+            if "sector scope" in c["prompt"].lower()
         ]
-        assert len(expansion_calls) >= 1
+        assert len(sector_calls) >= 6
 
     @pytest.mark.asyncio
-    async def test_persists_bodies_and_sources(self, mock_db):
-        """Regulatory bodies and sources are persisted to DB."""
+    async def test_instruction_text_passed_to_calls(self, mock_db):
+        """instruction_text is included verbatim in sector call prompts."""
         llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-005")
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-012")
 
-        async for _ in graph.run("DPA programs"):
+        marker = "UNIQUE_INSTRUCTION_MARKER_XYZ"
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_text=marker):
             pass
 
-        # db.add should have been called for bodies + sources + programs
-        assert mock_db.add.call_count >= 2  # At least 1 body + 1 source
-        assert mock_db.commit.call_count >= 2  # L0 sources commit + final commit
+        calls_with_marker = [
+            c for c in llm.grounded_calls if marker in c["prompt"]
+        ]
+        assert len(calls_with_marker) >= 6
 
     @pytest.mark.asyncio
-    async def test_l3_gap_fill_runs(self, mock_db):
-        """L3 gap fill runs when there are unmatched seeds."""
+    async def test_persists_entities_and_programs(self, mock_db):
+        """RegulatoryBody and Program records are added to the DB."""
         llm = MockLLM()
-        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-006")
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-013")
 
-        async for _ in graph.run(
-            "DPA programs",
-            seed_programs=[
-                {"name": "Unmatched Program X", "program_type": "municipal"},
-            ],
-            seed_index={"municipal": [{"name": "Unmatched Program X"}]},
-        ):
+        async for _ in graph.run("Test manifest", k_depth=2):
             pass
 
-        # L3 gap fill should have been attempted
-        gap_calls = [
-            c for c in llm.grounded_calls
-            if "gap" in c["prompt"].lower() or "unmatched" in c["prompt"].lower()
-        ]
-        assert len(gap_calls) >= 1
+        # db.add should have been called for entities, sources, programs, assessment
+        assert mock_db.add.call_count >= 2
+        assert mock_db.commit.call_count >= 2
 
+    @pytest.mark.asyncio
+    async def test_coverage_summary_per_sector(self, mock_db):
+        """coverage_summary in complete event contains per-sector entries."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-014")
+
+        custom_sectors = [
+            {"key": "federal", "label": "Federal", "priority": 1, "search_hints": []},
+            {"key": "state_hfa", "label": "State HFA", "priority": 2, "search_hints": []},
+        ]
+
+        events = []
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+            events.append(event)
+
+        complete = [e for e in events if e["event"] == "complete"][0]
+        summary = complete["data"]["coverage_summary"]
+        assert "federal" in summary
+        assert "state_hfa" in summary
+        assert "entities_found" in summary["federal"]
+        assert "programs_found" in summary["federal"]
+
+
+# ---------------------------------------------------------------------------
+# Tests: Utility methods (preserved from V4)
+# ---------------------------------------------------------------------------
 
 class TestDiscoveryGraphUtils:
-    def test_dedupe_programs(self):
+    def test_dedupe_programs_keeps_highest_confidence(self):
         programs = [
             {"name": "CalHFA MyHome", "administering_entity": "CalHFA",
              "jurisdiction": "CA", "confidence": 0.8},
@@ -375,7 +406,6 @@ class TestDiscoveryGraphUtils:
         ]
         result = DiscoveryGraph._dedupe_programs(programs)
         assert len(result) == 2
-        # Higher confidence should win
         calhfa = [p for p in result if "CalHFA" in p["name"]][0]
         assert calhfa["confidence"] == 0.9
 
@@ -413,21 +443,24 @@ class TestDiscoveryGraphUtils:
         assert rates["veteran"]["matched"] == 0
 
     def test_event_helper(self):
-        event = DiscoveryGraph._event("step", step="L0", status="running")
-        assert event["event"] == "step"
-        assert event["data"]["step"] == "L0"
+        event = DiscoveryGraph._event("sector_start", sector_key="federal")
+        assert event["event"] == "sector_start"
+        assert event["data"]["sector_key"] == "federal"
 
+
+# ---------------------------------------------------------------------------
+# Tests: Seed-to-entity mapping (preserved)
+# ---------------------------------------------------------------------------
 
 class TestSeedToEntityMapping:
     def test_all_seed_types_mapped(self):
-        """Every seed type in the keyword dict has an entity mapping."""
         from app.routers.manifests import _PROGRAM_TYPE_KEYWORDS
         for ptype in _PROGRAM_TYPE_KEYWORDS:
             assert ptype in _SEED_TO_ENTITY_TYPE, f"Missing mapping for {ptype}"
 
-    def test_entity_search_queries_exist(self):
-        """Entity types referenced by seed mapping have search queries."""
+    def test_seed_to_entity_type_coverage(self):
         entity_types = set(_SEED_TO_ENTITY_TYPE.values())
-        # Not all entity types need queries (federal is in training data)
-        for etype in ("municipal", "nonprofit", "employer", "tribal", "cdfi"):
-            assert etype in _ENTITY_SEARCH_QUERIES, f"Missing query for {etype}"
+        for required in ("federal", "state_hfa", "municipal", "employer", "tribal"):
+            assert required in entity_types, (
+                f"Required entity type '{required}' missing from _SEED_TO_ENTITY_TYPE values"
+            )
