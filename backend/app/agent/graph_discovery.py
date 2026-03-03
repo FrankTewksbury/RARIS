@@ -27,6 +27,8 @@ import asyncio
 import json
 import logging
 import re
+import time
+import urllib.request
 from collections import Counter
 from collections.abc import AsyncGenerator
 
@@ -58,6 +60,37 @@ from app.models.manifest import (
 
 logger = logging.getLogger(__name__)
 
+# region agent log
+_DEBUG_ENDPOINT = "http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6"
+_DEBUG_SESSION = "cb8819"
+
+
+def _debug_log(*, run_id: str, hypothesis_id: str, location: str, message: str, data: dict) -> None:
+    payload = {
+        "sessionId": _DEBUG_SESSION,
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data,
+        "timestamp": int(time.time() * 1000),
+    }
+    try:
+        body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
+        req = urllib.request.Request(
+            _DEBUG_ENDPOINT,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": _DEBUG_SESSION,
+            },
+        )
+        urllib.request.urlopen(req, timeout=0.5)
+    except Exception:
+        # Never break the pipeline because of debug logging
+        return
+# endregion
+
 # Confidence threshold below which items are flagged for human review
 L2_VERIFY_THRESHOLD = 0.6
 
@@ -80,6 +113,19 @@ _FALLBACK_INSTRUCTION = (
     "Use web search to find current, real entities with verified URLs. "
     "Return structured JSON as specified in the OUTPUT FORMAT section."
 )
+
+
+def _build_completeness_block(sector: dict) -> str:
+    """Build the sector-specific completeness requirements block for the header.
+
+    Returns an empty string when no requirements are defined so the header
+    renders cleanly without a blank section.
+    """
+    reqs = sector.get("completeness_requirements", [])
+    if not reqs:
+        return ""
+    lines = "\n".join(f"  - {r}" for r in reqs)
+    return f"\n## Completeness requirements for YOUR sector only:\n{lines}\n"
 
 
 class DiscoveryGraph:
@@ -351,6 +397,20 @@ class DiscoveryGraph:
 
             for sector, result in zip(batch, results):
                 if isinstance(result, Exception):
+                    # region agent log
+                    _debug_log(
+                        run_id="pre-fix",
+                        hypothesis_id="H1",
+                        location="graph_discovery.py:_run_l1_sectors",
+                        message="sector_task_exception",
+                        data={
+                            "sector_key": sector.get("key", ""),
+                            "sector_label": sector.get("label", ""),
+                            "exc_type": type(result).__name__,
+                            "exc_message": str(result),
+                        },
+                    )
+                    # endregion
                     logger.warning("[graph v5] sector '%s' failed: %s", sector["key"], result)
                     yield self._event("sector_complete",
                                       sector_key=sector["key"],
@@ -404,17 +464,100 @@ class DiscoveryGraph:
             sector_n=sector_n,
             sector_total=sector_total,
             search_hints_block=hints_block,
+            completeness_block=_build_completeness_block(sector),
         )
         prompt = sector_header + instruction_text
 
-        text, _citations = await asyncio.wait_for(
-            self.llm.complete_grounded([
-                {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
-                {"role": "user", "content": prompt},
-            ], max_tokens=32768),
-            timeout=300.0,
+        # region agent log
+        _debug_log(
+            run_id="pre-fix",
+            hypothesis_id="H3",
+            location="graph_discovery.py:_discover_sector",
+            message="sector_prompt_ready",
+            data={
+                "sector_key": sector.get("key", ""),
+                "sector_label": sector.get("label", ""),
+                "prompt_chars": len(prompt),
+                "header_chars": len(sector_header),
+                "instruction_chars": len(instruction_text),
+                "search_hints_count": len(search_hints),
+                "completeness_count": len(sector.get("completeness_requirements", [])),
+            },
         )
+        # endregion
+
+        logger.debug(
+            "[graph v5] sector '%s' prompt assembled — prompt_chars=%d instruction_chars=%d header_chars=%d",
+            sector["key"], len(prompt), len(instruction_text), len(sector_header),
+        )
+
+        try:
+            text, _citations = await asyncio.wait_for(
+                self.llm.complete_grounded([
+                    {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
+                    {"role": "user", "content": prompt},
+                ], max_tokens=16384),
+                timeout=300.0,
+            )
+        except Exception as exc:
+            # region agent log
+            _debug_log(
+                run_id="pre-fix",
+                hypothesis_id="H1",
+                location="graph_discovery.py:_discover_sector",
+                message="sector_call_error",
+                data={
+                    "sector_key": sector.get("key", ""),
+                    "sector_label": sector.get("label", ""),
+                    "exc_type": type(exc).__name__,
+                    "exc_message": str(exc),
+                },
+            )
+            # endregion
+            raise
+
+        # region agent log
+        _debug_log(
+            run_id="pre-fix",
+            hypothesis_id="H2",
+            location="graph_discovery.py:_discover_sector",
+            message="sector_call_response",
+            data={
+                "sector_key": sector.get("key", ""),
+                "text_len": len(text),
+                "tail": text[-200:] if len(text) > 200 else text,
+            },
+        )
+        # endregion
+
+        logger.debug(
+            "[graph v5] sector '%s' raw response — text_len=%d head=%r tail=%r",
+            sector["key"], len(text), text[:500], text[-200:] if len(text) > 200 else "",
+        )
+
         result = _extract_json(text)
+
+        # region agent log
+        _debug_log(
+            run_id="pre-fix",
+            hypothesis_id="H2",
+            location="graph_discovery.py:_discover_sector",
+            message="sector_parse_result",
+            data={
+                "sector_key": sector.get("key", ""),
+                "entities_found": len(result.get("administering_entities", [])),
+                "programs_found": len(result.get("programs", [])),
+                "sources_found": len(result.get("sources", [])),
+                "empty_result": not bool(result),
+            },
+        )
+        # endregion
+
+        if not result:
+            logger.warning(
+                "[graph v5] sector '%s' JSON parse produced empty result — text_len=%d tail=%r",
+                sector["key"], len(text), text[-300:] if len(text) > 300 else text,
+            )
 
         # Tag entities with sector key for traceability
         for entity in result.get("administering_entities", []):

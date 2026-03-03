@@ -445,8 +445,7 @@ SECTOR_SCOPE_HEADER = """\
 ## SECTOR SCOPE FOR THIS CALL: {sector_label} (sector {sector_n} of {sector_total})
 ## Search budget: 64 searches — spend ALL searches on this sector only
 ## Do NOT discover entities from other sectors (those are running in parallel calls)
-{search_hints_block}
----
+{search_hints_block}{completeness_block}---
 
 """
 

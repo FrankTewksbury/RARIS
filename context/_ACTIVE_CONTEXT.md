@@ -99,7 +99,7 @@ V3 hierarchical discovery had a fundamental **prompt-algorithm mismatch**: the e
 
 **Final state:** 306 tests across 25 test files — all passing.
 
-## V5 Graph BFS Engine — BUILD COMPLETE
+## V5 Graph BFS Engine — BUILD COMPLETE + LIVE TESTING IN PROGRESS
 
 V5 domain-agnostic BFS engine built in session S20260302_1430:
 
@@ -129,9 +129,10 @@ V5 domain-agnostic BFS engine built in session S20260302_1430:
 
 ## What's Next
 
-- [ ] First live test run with k_depth=1 (6 sector_start/sector_complete SSE events visible)
+- [ ] **K=1 verification run** — confirm all sectors return entities > 0 with new truncation recovery
+- [ ] **Commit pending changes** — `discovery.py`, `graph_discovery.py`, `prompts.py`, `useSSE.ts`, `AgentProgressPanel.tsx`, `DPA_Prompt_v8.md`, `DPA_Sectors_v2.json`, constitution files
 - [ ] First live test run with k_depth=2 (entity expansion + programs populated)
-- [ ] Upload `DPA_Sectors_v1.json` + `DPA_Prompt_v7.md` via UI and validate end-to-end
+- [ ] Upload `DPA_Sectors_v2.json` + `DPA_Prompt_v8.md` via UI and validate end-to-end
 - [ ] AuthorityType DB migration (new enum values: state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal)
 
 ### Remaining Gaps (Deferred)

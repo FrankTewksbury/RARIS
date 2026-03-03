@@ -24,61 +24,122 @@ export function useSSE() {
     sourceRef.current = eventSource;
     setState((s) => ({ ...s, isConnected: true, events: [], error: null }));
 
+    // ── V5 BFS events ────────────────────────────────────────────────────
+
+    eventSource.addEventListener("sector_start", (e) => {
+      const data = JSON.parse(e.data);
+      // #region agent log
+      fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ea4deb" },
+        body: JSON.stringify({ sessionId: "ea4deb", runId: "sse-v5", hypothesisId: "H-SSE", location: "useSSE.ts:sector_start", message: "sector_start received", data, timestamp: Date.now() }),
+      }).catch(() => {});
+      // #endregion
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `sector:${data.sector_key}`,
+          status: "running",
+          message: `[${data.sector_n}/${data.sector_total}] ${data.sector_label} — starting…`,
+          ...data,
+        }],
+      }));
+    });
+
+    eventSource.addEventListener("sector_complete", (e) => {
+      const data = JSON.parse(e.data);
+      // #region agent log
+      fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ea4deb" },
+        body: JSON.stringify({ sessionId: "ea4deb", runId: "sse-v5", hypothesisId: "H-SSE", location: "useSSE.ts:sector_complete", message: "sector_complete received", data, timestamp: Date.now() }),
+      }).catch(() => {});
+      // #endregion
+      const statusLabel = data.status === "failed" ? "failed" : "complete";
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `sector:${data.sector_key}`,
+          status: statusLabel,
+          message: data.status === "failed"
+            ? `${data.sector_label} — failed: ${data.error}`
+            : `${data.sector_label} — ${data.entities_found ?? 0} entities found`,
+          ...data,
+        }],
+      }));
+    });
+
+    eventSource.addEventListener("l1_assembly_complete", (e) => {
+      const data = JSON.parse(e.data);
+      // #region agent log
+      fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ea4deb" },
+        body: JSON.stringify({ sessionId: "ea4deb", runId: "sse-v5", hypothesisId: "H-SSE", location: "useSSE.ts:l1_assembly_complete", message: "l1_assembly_complete received", data, timestamp: Date.now() }),
+      }).catch(() => {});
+      // #endregion
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: "l1_assembly",
+          status: "complete",
+          message: `L1 complete — ${data.total_entities ?? 0} entities, ${data.total_sources ?? 0} sources across ${data.sector_count ?? 0} sectors`,
+          ...data,
+        }],
+      }));
+    });
+
+    eventSource.addEventListener("entity_expansion_start", (e) => {
+      const data = JSON.parse(e.data);
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `expand:${data.entity_id}`,
+          status: "running",
+          message: `Expanding [${data.entity_n}/${data.entity_total}]: ${data.entity_name}`,
+          ...data,
+        }],
+      }));
+    });
+
+    eventSource.addEventListener("entity_expansion_complete", (e) => {
+      const data = JSON.parse(e.data);
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `expand:${data.entity_id}`,
+          status: data.status === "failed" ? "failed" : "complete",
+          message: data.status === "failed"
+            ? `Expand failed: ${data.entity_name}`
+            : `${data.entity_name} — ${data.programs_found ?? 0} programs`,
+          ...data,
+        }],
+      }));
+    });
+
+    // ── Legacy V3 events (keep for backwards compatibility) ───────────────
+
     eventSource.addEventListener("step", (e) => {
       const data = JSON.parse(e.data) as AgentStepEvent;
-      // #region agent log
-      if (data.step === "program_enumerator" || data.step === "source_hunter") {
-        fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Debug-Session-Id": "2fe1ec",
-          },
-          body: JSON.stringify({
-            sessionId: "2fe1ec",
-            runId: "sse-stream",
-            hypothesisId: "H4",
-            location: "frontend/src/hooks/useSSE.ts:step",
-            message: "SSE step event received",
-            data: { step: data.step, status: data.status, message: data.message ?? null },
-            timestamp: Date.now(),
-          }),
-        }).catch(() => {});
-      }
-      // #endregion
       setState((s) => ({ ...s, events: [...s.events, data] }));
     });
 
     eventSource.addEventListener("progress", (e) => {
       const data = JSON.parse(e.data);
-      // #region agent log
-      fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Debug-Session-Id": "2fe1ec",
-        },
-        body: JSON.stringify({
-          sessionId: "2fe1ec",
-          runId: "sse-stream",
-          hypothesisId: "H1",
-          location: "frontend/src/hooks/useSSE.ts:progress",
-          message: "SSE progress event received",
-          data: {
-            sources_found: data.sources_found ?? null,
-            bodies_processed: data.bodies_processed ?? null,
-            total_bodies: data.total_bodies ?? null,
-            message: data.message ?? null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setState((s) => ({ ...s, events: [...s.events, { step: "progress", status: "update", ...data }] }));
     });
 
+    // ── Terminal events ───────────────────────────────────────────────────
+
     eventSource.addEventListener("complete", (e) => {
       const data = JSON.parse(e.data);
+      // #region agent log
+      fetch("http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "ea4deb" },
+        body: JSON.stringify({ sessionId: "ea4deb", runId: "sse-v5", hypothesisId: "H-SSE", location: "useSSE.ts:complete", message: "complete received", data, timestamp: Date.now() }),
+      }).catch(() => {});
+      // #endregion
       setState((s) => ({
         ...s,
         isConnected: false,

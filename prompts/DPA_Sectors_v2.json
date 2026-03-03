@@ -1,0 +1,129 @@
+[
+  {
+    "key": "federal",
+    "label": "Federal/National",
+    "priority": 1,
+    "completeness_requirements": [
+      "Federal and Federal Agency Home Load and Down Payment Assistance Programs",
+      "HOME Investment Partnerships Program implementers and sub-grantees in target geography",
+      "GSE (FreddieNAc and FannieNae gome load and down payment assistance programs",
+      "CDBG-funded homebuyer assistance programs administered by local grantees",
+      "USDA Rural Development homeownership programs (Section 502 Direct, Section 502 Guaranteed, Section 504)",
+      "VA-related cash purchase assistance grants (ONLY where actual DPA cash disbursement exists — not VA loan guaranty itself)",
+      "HUD-approved housing counseling agencies as candidate entity pointers (not programs themselves)",
+      "Federal Native American housing programs (Section 184 Indian Home Loan Guarantee, NAHASDA) as candidate pointers to tribal entities",
+      "Record 'none found' with negative evidence for any category above that is truly absent in target geography"
+    ],
+    "search_hints": [
+      "{STATE}/{CITY}/{COUNTY} + HOME + homebuyer assistance",
+      "CDBG + homebuyer assistance + {STATE}",
+      "USDA Rural Development + homeownership assistance + {STATE}",
+      "VA + down payment assistance grant + {STATE}"
+    ]
+  },
+  {
+    "key": "state_hfa",
+    "label": "State HFA",
+    "priority": 2,
+    "completeness_requirements": [
+      "State Housing Finance Agency (HFA) — all active DPA products (second mortgages, forgivable grants, deferred-payment loans)",
+      "State bond-funded first mortgage programs that bundle DPA as a companion product",
+      "HFA-administered special population products (veterans, educators, law enforcement, healthcare workers)",
+      "HFA sub-programs administered through participating lender networks",
+      "Any statewide purchase assistance programs operated outside the HFA (state treasury, department of housing)",
+      "Record 'none found' with negative evidence for any category above that is truly absent"
+    ],
+    "search_hints": [
+      "{STATE} housing finance agency + down payment assistance",
+      "{STATE} HFA + second mortgage",
+      "{STATE} HFA + forgivable grant + first-time homebuyer"
+    ]
+  },
+  {
+    "key": "employer",
+    "label": "Employer/Industry",
+    "priority": 3,
+    "completeness_requirements": [
+      "Universities and colleges with 'Live Near Your Work' or employee homeownership assistance programs",
+      "Hospital systems and healthcare networks with workforce homebuyer assistance",
+      "Major private employers with employer-assisted housing (EAH) purchase aid",
+      "Public school districts with teacher/staff homebuyer programs",
+      "Unions and labor organizations with member down payment assistance or housing loan funds",
+      "Employer-funded programs administered through a nonprofit or CDFI intermediary",
+      "Record 'none found' with negative evidence for any category above that is truly absent in target geography"
+    ],
+    "search_hints": [
+      "{CITY}/{STATE} + live near your work + homebuyer",
+      "{CITY}/{STATE} + employer assisted housing + workforce",
+      "{CITY}/{STATE} + university + employee homeownership",
+      "{CITY}/{STATE} + hospital system + workforce homebuyer",
+      "{CITY}/{STATE} + union + down payment assistance"
+    ]
+  },
+  {
+    "key": "nonprofit",
+    "label": "Nonprofit/CDFI",
+    "priority": 4,
+    "completeness_requirements": [
+      "CDFIs operating down payment assistance loan funds or grant pools in target geography",
+      "NeighborWorks America affiliates with homebuyer assistance products",
+      "Habitat for Humanity affiliates with homeownership purchase assistance (not sweat equity only)",
+      "Housing partnerships and community land trusts with purchase assistance",
+      "Credit unions administering DPA pools or homebuyer grant programs",
+      "Nonprofit loan funds providing soft seconds or forgivable grants",
+      "Faith-based and community development organizations with verified DPA products",
+      "Record 'none found' with negative evidence for any category above that is truly absent"
+    ],
+    "search_hints": [
+      "{CITY}/{STATE} + CDFI + down payment assistance",
+      "{CITY}/{STATE} + loan fund + homebuyer assistance",
+      "{CITY}/{STATE} + housing partnership + down payment",
+      "{CITY}/{STATE} + NeighborWorks + down payment assistance",
+      "{CITY}/{STATE} + Habitat for Humanity + homeownership",
+      "{CITY}/{STATE} + credit union + down payment assistance pool"
+    ]
+  },
+  {
+    "key": "tribal",
+    "label": "Tribal",
+    "priority": 5,
+    "completeness_requirements": [
+      "Federally recognized tribal housing authorities operating homeownership assistance in or near target geography",
+      "Tribally Designated Housing Entities (TDHEs) with purchase assistance products",
+      "Section 184 Indian Home Loan Guarantee Program local implementers and lenders",
+      "NAHASDA-funded homeownership programs operated by tribal entities",
+      "Inter-tribal housing coalitions or regional Native housing organizations",
+      "Record 'none found' with negative evidence if no tribal entities operate in target geography"
+    ],
+    "search_hints": [
+      "{STATE} tribal housing authority + homeownership assistance",
+      "{COUNTY} tribal + down payment assistance",
+      "Section 184 + {STATE} + homebuyer",
+      "native american housing + {STATE} + purchase assistance"
+    ]
+  },
+  {
+    "key": "municipal",
+    "label": "Municipal/County/PHA",
+    "priority": 6,
+    "completeness_requirements": [
+      "City Community Development / Housing & Neighborhood Services / Housing Department DPA programs",
+      "County housing departments and Community Development offices with purchase assistance",
+      "Public Housing Authorities (PHAs) operating homeownership voucher or DPA programs",
+      "Redevelopment agencies and urban renewal authorities with homebuyer incentives",
+      "Land banks with owner-occupant purchase assistance or discount programs",
+      "Housing trust funds distributing DPA grants to homebuyers",
+      "Neighborhood revitalization offices with targeted homebuyer incentive zones",
+      "Special assessment districts or tax increment financing areas with homebuyer programs",
+      "Record 'none found' with negative evidence for any category above that is truly absent"
+    ],
+    "search_hints": [
+      "{CITY} housing department + homebuyer assistance",
+      "{CITY} community development + down payment",
+      "{COUNTY} housing + first-time homebuyer",
+      "{CITY}/{COUNTY} PHA + homeownership assistance",
+      "{CITY} housing trust fund + down payment",
+      "{COUNTY} redevelopment authority + purchase assistance"
+    ]
+  }
+]

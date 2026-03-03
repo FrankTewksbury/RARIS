@@ -18,13 +18,14 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # LLM
-    llm_provider: str = "openai"
+    llm_provider: str = "gemini"
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-sonnet-4-20250514"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.1-pro-preview"
     gemini_thinking_budget: int = 24576
+    gemini_max_remote_calls: int = 8
     # Comma-separated ordered fallback chain. Supports :no-think suffix to disable thinking budget.
     # Primary is always tried first; this list provides the downgrade path.
     gemini_fallback_models: str = "gemini-3.1-pro-preview,gemini-3.1-pro-preview:no-think,gemini-3-flash-preview"

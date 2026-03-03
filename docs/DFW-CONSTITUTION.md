@@ -86,6 +86,15 @@ These nine principles are the foundation of DFW. Every rule, convention, and pro
 
 > **Derives from:** P1 (Context Is Currency), P4 (Explicit Over Implicit)
 
+### RULE: Never Remove Debug Instrumentation Without Explicit Instruction
+
+- Agents MUST NOT remove, strip, or disable debug logging, instrumentation, or diagnostic code unless the user explicitly instructs it in the current session.
+- Handoff documents or prior-session notes recommending removal are NOT sufficient authorization — they reflect the intent of a prior agent. The current user must confirm.
+- When a handoff says "remove debug code before commit", the agent MUST ask the user before acting: "The handoff recommends removing debug instrumentation — do you want to keep it?"
+- Debug instrumentation that uses raw file writes or session-specific paths SHOULD be refactored to use `logger.debug(...)` rather than removed.
+
+> **Derives from:** P1 (Context Is Currency), P2 (Humans Steer)
+
 ### RULE: Secrets Are Sacred
 
 - Agents MUST NOT read, output, log, persist, or display the contents of:

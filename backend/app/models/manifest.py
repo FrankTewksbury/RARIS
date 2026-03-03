@@ -72,6 +72,13 @@ class AuthorityType(enum.StrEnum):
     gse = "gse"
     sro = "sro"
     industry_body = "industry_body"
+    state_hfa = "state_hfa"
+    municipal = "municipal"
+    pha = "pha"
+    nonprofit = "nonprofit"
+    cdfi = "cdfi"
+    employer = "employer"
+    tribal = "tribal"
 
 
 class GapSeverity(enum.StrEnum):
@@ -95,6 +102,7 @@ class Manifest(Base):
     )
     completeness_score: Mapped[float] = mapped_column(Float, default=0.0)
     jurisdiction_hierarchy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    coverage_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     review_history: Mapped[list | None] = mapped_column(JSONB, default=list)
 
     # Relationships
@@ -119,7 +127,7 @@ class RegulatoryBody(Base):
     manifest_id: Mapped[str] = mapped_column(ForeignKey("manifests.id"), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     jurisdiction: Mapped[Jurisdiction] = mapped_column(Enum(Jurisdiction))
-    authority_type: Mapped[AuthorityType] = mapped_column(Enum(AuthorityType))
+    authority_type: Mapped[AuthorityType] = mapped_column(Enum(AuthorityType, native_enum=False))
     url: Mapped[str] = mapped_column(Text, nullable=False)
     governs: Mapped[list | None] = mapped_column(JSONB, default=list)
 

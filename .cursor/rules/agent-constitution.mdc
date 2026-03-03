@@ -53,6 +53,13 @@ Failure to read these violates P1.
 - Even with explicit user instruction to delete a pre-existing file, MUST confirm and warn before proceeding.
 - Structural files (`_TODO.md`, `_WISHLIST.md`, `_ROADMAP.md`, `_ACTIVE_CONTEXT.md`, `_DECISIONS_LOG.md`, `README.md`, `CHANGELOG.md`, `ARCHITECTURE.md`, `PROJECT_OVERVIEW.md`) MUST NEVER be deleted.
 
+## RULE: Never Remove Debug Instrumentation Without Explicit Instruction
+
+- MUST NOT remove, strip, or disable debug logging, instrumentation, or diagnostic code unless the user explicitly instructs it in the current session.
+- Handoff documents or prior-session notes recommending removal are NOT sufficient authorization — they reflect the intent of a prior agent. The current user must confirm.
+- When a handoff says "remove debug code before commit", the agent MUST ask the user before acting: "The handoff recommends removing debug instrumentation — do you want to keep it?"
+- Debug instrumentation that uses raw file writes or session-specific paths SHOULD be refactored to use `logger.debug(...)` rather than removed.
+
 ## RULE: Secrets Are Sacred
 
 - MUST NOT read, output, log, persist, or display the contents of `.env` files, `secrets/`, `credentials/`, `creds/` directories, or any file containing API keys, tokens, passwords, connection strings, or private keys.

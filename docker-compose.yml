@@ -2,7 +2,7 @@ services:
   db:
     image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "5902:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     environment:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7
     ports:
-      - "6379:6379"
+      - "5903:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -30,13 +30,13 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "5901:8000"
     volumes:
       - ./.cursor:/workspace/.cursor
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-raris}:${POSTGRES_PASSWORD:-changeme}@db:5432/${POSTGRES_DB:-raris}
       REDIS_URL: redis://redis:6379/0
-      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
@@ -57,7 +57,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
     ports:
-      - "80:80"
+      - "5900:80"
     depends_on:
       backend:
         condition: service_healthy

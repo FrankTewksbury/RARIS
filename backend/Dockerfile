@@ -8,12 +8,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Copy dependency files first for layer caching
 # All deps ship manylinux wheels — no build-essential/libpq-dev needed
 COPY pyproject.toml uv.lock ./
-RUN uv sync --no-dev --no-install-project
+# Install all deps including dev extras (pytest, ruff) so tests can run inside container
+RUN uv sync --all-extras --no-install-project
 
 # Copy application code
 COPY alembic.ini ./
 COPY alembic/ alembic/
 COPY app/ app/
+COPY tests/ tests/
 
 # Expose port
 EXPOSE 8000

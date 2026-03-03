@@ -133,7 +133,34 @@ def _extract_json(text: str) -> dict:
             return result
 
     # 3. Direct parse as last resort
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+
+
+def _count_open_brackets(text: str) -> int:
+    """Count unclosed array brackets [ outside of JSON strings."""
+    depth = 0
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "[":
+            depth += 1
+        elif ch == "]":
+            depth -= 1
+    return max(depth, 0)
 
 
 def _extract_json_object(text: str, start: int) -> dict | None:
@@ -171,17 +198,28 @@ def _extract_json_object(text: str, start: int) -> dict | None:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
                     return None
-            if depth == 1:
-                # Closed a nested object — this is a safe recovery point
+            if depth >= 1:
+                # Any nested object close is a potential safe recovery point
                 last_valid_close = i
 
-    # Truncated response — recover by closing at the last safe nested close
-    # Strip everything from the last complete field onward, then close the root
+    # Truncated response — recover by closing at the last safe nested close.
+    # Build partial up to the last safely closed nested object, strip any
+    # dangling key-colon patterns, close open arrays, then close the root.
     if last_valid_close > start:
-        # Build a candidate by closing any trailing comma and closing the root
         partial = text[start:last_valid_close + 1]
         partial = partial.rstrip().rstrip(",")
-        candidate = partial + "\n}"
+
+        # Strip dangling "key": with no value (e.g. response ends with "funding_streams":)
+        partial = re.sub(r',\s*"[^"]+"\s*:\s*$', '', partial.rstrip())
+        # Strip dangling "key": "partial-string with no closing quote
+        partial = re.sub(r',\s*"[^"]+"\s*:\s*"[^"]*$', '', partial.rstrip())
+
+        # Count unclosed arrays in the partial and close them
+        # (e.g. programs[ ... last_item} — the [ is still open)
+        # Scan outside strings only to avoid false counts from string content
+        open_brackets = _count_open_brackets(partial)
+        closing = "]" * open_brackets + "\n}"
+        candidate = partial + "\n" + closing
         try:
             return json.loads(candidate)
         except json.JSONDecodeError:

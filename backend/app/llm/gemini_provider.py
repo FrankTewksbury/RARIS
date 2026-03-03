@@ -192,7 +192,7 @@ class GeminiProvider(LLMProvider):
         config = self._build_config(kwargs)
         config.tools = [types.Tool(google_search=types.GoogleSearch())]
         config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
-            maximum_remote_calls=64,
+            maximum_remote_calls=settings.gemini_max_remote_calls,
         )
 
         response = await self._call_with_resilience(
