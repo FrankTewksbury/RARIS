@@ -215,12 +215,16 @@ async def _parse_sector_upload(upload: UploadFile) -> list[dict]:
         if not item.get("key") or not item.get("label"):
             logger.warning("[manifests] sector entry missing key/label — skipped: %s", item)
             continue
-        sectors.append({
+        sector: dict = {
             "key": str(item["key"]),
             "label": str(item["label"]),
             "priority": int(item.get("priority", len(sectors) + 1)),
             "search_hints": list(item.get("search_hints", [])),
-        })
+            "completeness_requirements": list(item.get("completeness_requirements", [])),
+            "sector_prompt": str(item.get("sector_prompt", "")),
+            "expected_entity_types": list(item.get("expected_entity_types", [])),
+        }
+        sectors.append(sector)
 
     if not sectors:
         logger.warning("[manifests] sector file contained no valid entries — using default sectors")

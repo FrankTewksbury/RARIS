@@ -1,7 +1,7 @@
 # Active Context
 
-- Updated: 2026-03-02
-- Current focus: DPA V4 Prompt-Driven Discovery — **BUILD COMPLETE** (306 tests passing)
+- Updated: 2026-03-03
+- Current focus: DPA V6 RLM Queue-Driven BFS Engine — **BUILD COMPLETE** (311 tests passing)
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
 
@@ -127,13 +127,28 @@ V5 domain-agnostic BFS engine built in session S20260302_1430:
 - `prompts/DPA_Prompt_v7.md` — new instruction file
 - `prompts/DPA_Sectors_v1.json` — new sector config
 
+## V6 RLM Queue-Driven BFS Engine — BUILD COMPLETE
+
+V6 rewrites the static 2-level BFS (V5) into a recursive queue-driven BFS (RLM pattern):
+- `DiscoveryQueue` (priority heap + visited-set dedup) drives all L2+ expansion
+- `k_depth` maps to queue max_depth: k=1 → L1 only, k=2 → L1+L2, k=3 → L1+L2+L3
+- Safety caps: `max_api_calls=200`, `max_discovery_depth=3`, `max_entities_per_sector=50`
+- Sector prompt injection: `[INJECT SECTOR PROMPT HERE]` replaced with sector-specific content
+- LLM call logging: all 3 providers instrumented with Track A structured logging
+- `[STAGE]` and `[HEARTBEAT]` stdout lines per log-file-rule.mdc
+
+**New files:** `discovery_queue.py`, `call_logger.py`, `DPA_Prompt_v9.md`, `DPA_Sectors_v3.json`
+**Modified:** `graph_discovery.py` (full rewrite), `config.py`, `manifests.py`, all 3 LLM providers
+
+**Handoff:** `prompts/009-handoff-v6-rlm-engine-rewrite.md`
+
 ## What's Next
 
-- [ ] **K=1 verification run** — confirm all sectors return entities > 0 with new truncation recovery
-- [ ] **Commit pending changes** — `discovery.py`, `graph_discovery.py`, `prompts.py`, `useSSE.ts`, `AgentProgressPanel.tsx`, `DPA_Prompt_v8.md`, `DPA_Sectors_v2.json`, constitution files
-- [ ] First live test run with k_depth=2 (entity expansion + programs populated)
-- [ ] Upload `DPA_Sectors_v2.json` + `DPA_Prompt_v8.md` via UI and validate end-to-end
-- [ ] AuthorityType DB migration (new enum values: state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal)
+- [ ] Live test run with k_depth=1 — verify all sectors return entities > 0
+- [ ] Live test run with k_depth=2 — confirm queue expansion discovers programs
+- [ ] AuthorityType DB migration (state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal)
+- [ ] Frontend: surface queue stats (depth, pending, api_calls) in AgentProgressPanel
+- [ ] Upload `DPA_Sectors_v3.json` + `DPA_Prompt_v9.md` via UI and validate end-to-end
 
 ### Remaining Gaps (Deferred)
 

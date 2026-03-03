@@ -1,25 +1,27 @@
-"""Hierarchical Graph Discovery Engine (V5) — Domain-Agnostic BFS.
+"""Hierarchical Graph Discovery Engine (V6) — RLM Queue-Driven BFS.
 
-V5 architecture:
-- L1: 6 (or N) parallel sector calls, each with a full 64-search AFC budget.
+V6 architecture (ported from prepop1 recursive BFS pattern):
+- L1: 6 (or N) parallel sector calls seed the DiscoveryQueue with entities at depth=0.
   Each call receives the full instruction_text prefixed with a sector scope header.
+  The [INJECT SECTOR PROMPT HERE] placeholder is replaced with sector_prompt from sector file.
   No domain expertise lives in engine code — all methodology comes from the uploaded prompt.
-- L2: One focused expansion call per L1 entity (parallelized via asyncio.gather).
-  Each call finds all programs, portals, and guidelines for a single entity.
-- L3: (k_depth=3) Program detail per program node — benefits, eligibility, status, portals.
+- L2+: Queue-driven BFS loop processes entities at increasing depth.
+  Each entity expansion call finds programs, sources, and sub-entities.
+  Newly discovered entities are enqueued at depth+1 if within max_depth.
+- Safety caps: max_api_calls, max_discovery_depth, max_entities_per_sector enforce limits.
 
 Sector list is supplied at runtime from the uploaded sector JSON file.
 Falls back to DEFAULT_SECTORS (from prompts.py) if no sector file is provided.
 
-k_depth semantics:
-  k_depth=1 → L1 entity discovery only
-  k_depth=2 → L1 entities + L2 program expansion (default for first test run)
-  k_depth=3 → L1 + L2 + L3 program detail verification
+k_depth semantics (mapped to queue max_depth):
+  k_depth=1 → L1 entity discovery only (queue max_depth=0, no expansion)
+  k_depth=2 → L1 entities + L2 program expansion (queue max_depth=1)
+  k_depth=3 → L1 + L2 + L3 deeper expansion (queue max_depth=2)
 
-SSE events:
+SSE events (unchanged from V5 for frontend compatibility):
   sector_start / sector_complete       — one pair per L1 sector
   l1_assembly_complete                 — after all sectors merged and persisted
-  entity_expansion_start / entity_expansion_complete — per L2 entity (k_depth >= 2)
+  entity_expansion_start / entity_expansion_complete — per queue item (depth >= 1)
   complete                             — final with coverage_summary + seed metrics
 """
 
@@ -35,12 +37,15 @@ from collections.abc import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.discovery import _extract_json, _safe_enum
+from app.agent.discovery_queue import DiscoveryQueue
 from app.agent.prompts import (
     DEFAULT_SECTORS,
     L0_ORCHESTRATOR_SYSTEM,
     SECTOR_SCOPE_HEADER,
 )
+from app.config import settings
 from app.llm.base import LLMProvider
+from app.llm.call_logger import log_heartbeat, log_stage
 from app.models.manifest import (
     AccessMethod,
     AuthorityLevel,
@@ -59,6 +64,9 @@ from app.models.manifest import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Placeholder token in instruction files that gets replaced with sector-specific content
+_SECTOR_PROMPT_PLACEHOLDER = "[INJECT SECTOR PROMPT HERE]"
 
 # region agent log
 _DEBUG_ENDPOINT = "http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6"
@@ -128,13 +136,25 @@ def _build_completeness_block(sector: dict) -> str:
     return f"\n## Completeness requirements for YOUR sector only:\n{lines}\n"
 
 
+def _inject_sector_prompt(instruction_text: str, sector: dict) -> str:
+    """Replace the [INJECT SECTOR PROMPT HERE] placeholder with sector-specific content.
+
+    If no sector_prompt is defined, the placeholder is removed cleanly.
+    """
+    sector_prompt = sector.get("sector_prompt", "").strip()
+    if sector_prompt:
+        return instruction_text.replace(_SECTOR_PROMPT_PLACEHOLDER, sector_prompt)
+    return instruction_text.replace(_SECTOR_PROMPT_PLACEHOLDER, "")
+
+
 class DiscoveryGraph:
-    """V5 domain-agnostic BFS discovery engine."""
+    """V6 RLM queue-driven BFS discovery engine."""
 
     def __init__(self, llm: LLMProvider, db: AsyncSession, manifest_id: str):
         self.llm = llm
         self.db = db
         self.manifest_id = manifest_id
+        self._api_calls: int = 0
 
     async def run(
         self,
@@ -149,7 +169,7 @@ class DiscoveryGraph:
         constitution_text: str = "",
         instruction_text: str = "",
     ) -> AsyncGenerator[dict, None]:
-        """Execute V5 BFS discovery, yielding SSE events.
+        """Execute V6 RLM BFS discovery, yielding SSE events.
 
         sectors: list of sector dicts from uploaded sector file.
                  Falls back to DEFAULT_SECTORS if empty or None.
@@ -174,27 +194,56 @@ class DiscoveryGraph:
                 + _instruction
             )
 
+        # Safety caps from config
+        max_api_calls = settings.max_api_calls
+        max_entities_per_sector = settings.max_entities_per_sector
+
+        # Queue max_depth: k_depth=1 means L1 only (no queue expansion),
+        # k_depth=2 means 1 expansion level, etc.
+        queue_max_depth = min(k_depth - 1, settings.max_discovery_depth)
+
+        # Initialize the discovery queue
+        queue = DiscoveryQueue(max_depth=queue_max_depth)
+
         all_entities: list[dict] = []
         all_sources: list[dict] = []
         all_programs: list[dict] = []
         source_id_counter = 1
+        self._api_calls = 0
 
-        # ── L1: Parallel Sector Discovery ────────────────────────────────
+        # ── L1: Parallel Sector Discovery (seeds the queue) ──────────────
+        l1_start_time = time.monotonic()
+        log_stage("l1_sector_discovery", status="running", model=getattr(self.llm, "model", ""))
         async for event in self._run_l1_sectors(
             sectors=_sectors,
             instruction_text=_instruction,
             sector_concurrency=sector_concurrency,
+            max_entities_per_sector=max_entities_per_sector,
+            max_api_calls=max_api_calls,
         ):
             if event.get("event") == "_l1_sector_result":
                 # Internal event — harvest entities and sources
                 data = event.get("data", {})
                 sector_entities = data.get("administering_entities", [])
                 sector_sources = data.get("sources", [])
+                sector_key = data.get("sector_key", "")
                 for src in sector_sources:
                     src.setdefault("id", f"src-{source_id_counter:03d}")
                     source_id_counter += 1
                 all_entities.extend(sector_entities)
                 all_sources.extend(sector_sources)
+
+                # Seed the queue with discovered entities for L2+ expansion
+                for entity in sector_entities:
+                    entity_id = entity.get("id", self._normalize_name(entity.get("name", ""))[:40])
+                    queue.enqueue(
+                        target_type="entity",
+                        target_id=entity_id,
+                        priority=entity.get("priority", 10),
+                        discovered_from=f"sector:{sector_key}",
+                        depth=1,
+                        metadata=entity,
+                    )
             else:
                 yield event
 
@@ -234,33 +283,75 @@ class DiscoveryGraph:
 
         await self.db.commit()
 
+        log_stage(
+            "l1_sector_discovery", status="complete",
+            model=getattr(self.llm, "model", ""),
+            sources=len(all_sources), programs=0,
+        )
         yield self._event("l1_assembly_complete",
                           total_entities=len(all_entities),
                           total_sources=len(all_sources),
-                          sector_count=len(_sectors))
+                          sector_count=len(_sectors),
+                          queue_stats=queue.stats())
 
-        if k_depth < 2:
-            # k_depth=1 — entity graph only, skip program expansion
+        if k_depth < 2 or queue.is_empty():
+            # k_depth=1 or no entities discovered — skip expansion
             manifest.status = ManifestStatus.pending_review
             await self.db.commit()
             yield self._event("complete",
                               manifest_id=self.manifest_id,
                               total_entities=len(all_entities),
                               total_programs=0,
+                              api_calls=self._api_calls,
+                              queue_stats=queue.stats(),
                               coverage_summary=self._build_coverage_summary(_sectors, all_entities, []))
             return
 
-        # ── L2: Per-Entity Program Expansion ─────────────────────────────
-        async for event in self._run_l2_entity_expansion(
-            entities=all_entities,
-            instruction_text=_instruction,
-            seed_index=_seed_index,
-        ):
-            if event.get("event") == "_l2_entity_result":
-                data = event.get("data", {})
-                entity_programs = data.get("programs", [])
-                entity_sources = data.get("sources", [])
-                for src in entity_sources:
+        # ── L2+: Queue-Driven BFS Expansion ──────────────────────────────
+        log_stage("l2_queue_expansion", status="running", model=getattr(self.llm, "model", ""))
+        l2_start_time = time.monotonic()
+        entity_n = 0
+        entity_total = queue.size()
+
+        while not queue.is_empty():
+            # Safety cap: stop if we've hit the API call limit
+            if self._api_calls >= max_api_calls:
+                logger.warning(
+                    "[graph v6] API call limit reached (%d/%d) — stopping queue expansion",
+                    self._api_calls, max_api_calls,
+                )
+                break
+
+            item = queue.pop()
+            if item is None:
+                break
+
+            entity_n += 1
+            entity = item.metadata
+            entity_id = item.target_id
+            entity_name = entity.get("name", entity_id)
+
+            yield self._event("entity_expansion_start",
+                              entity_id=entity_id,
+                              entity_name=entity_name,
+                              entity_n=entity_n,
+                              entity_total=entity_total,
+                              depth=item.depth,
+                              queue_pending=queue.size())
+
+            try:
+                result = await asyncio.wait_for(
+                    self._expand_entity(entity=entity, instruction_text=_instruction),
+                    timeout=180.0,
+                )
+                self._api_calls += 1
+
+                programs = result.get("programs", [])
+                sources = result.get("sources", [])
+                sub_entities = result.get("administering_entities", [])
+
+                # Persist sources from this expansion
+                for src in sources:
                     src.setdefault("id", f"src-{source_id_counter:03d}")
                     source_id_counter += 1
                     all_sources.append(src)
@@ -282,12 +373,81 @@ class DiscoveryGraph:
                         ),
                         classification_tags=src.get("classification_tags", []),
                     ))
-                for prog in entity_programs:
+
+                # Collect programs with provenance
+                for prog in programs:
                     prog.setdefault("provenance_links", {})
-                    prog["provenance_links"]["discovery_level"] = "L2"
+                    prog["provenance_links"]["discovery_level"] = f"L{item.depth + 1}"
+                    prog["provenance_links"]["discovered_from"] = item.discovered_from
                     all_programs.append(prog)
-            else:
-                yield event
+
+                # Enqueue sub-entities for deeper expansion (RLM recursion)
+                enqueued_children = 0
+                for sub_entity in sub_entities:
+                    sub_id = sub_entity.get(
+                        "id",
+                        self._normalize_name(sub_entity.get("name", ""))[:40],
+                    )
+                    sub_entity.setdefault("sector_key", entity.get("sector_key", ""))
+                    added = queue.enqueue(
+                        target_type="entity",
+                        target_id=sub_id,
+                        priority=sub_entity.get("priority", item.priority + 1),
+                        discovered_from=f"entity:{entity_id}",
+                        depth=item.depth + 1,
+                        metadata=sub_entity,
+                    )
+                    if added:
+                        enqueued_children += 1
+                        all_entities.append(sub_entity)
+                        # Persist sub-entity
+                        self.db.add(RegulatoryBody(
+                            id=sub_id,
+                            manifest_id=self.manifest_id,
+                            name=sub_entity.get("name", "Unknown Entity"),
+                            jurisdiction=_safe_enum(Jurisdiction, sub_entity.get("jurisdiction")),
+                            authority_type=_safe_enum(AuthorityType, sub_entity.get("entity_type")),
+                            url=sub_entity.get("url", ""),
+                            governs=sub_entity.get("governs", []),
+                        ))
+
+                # Update total for SSE progress reporting
+                entity_total = entity_n + queue.size()
+
+                yield self._event("entity_expansion_complete",
+                                  entity_id=entity_id,
+                                  entity_name=entity_name,
+                                  entity_n=entity_n,
+                                  entity_total=entity_total,
+                                  depth=item.depth,
+                                  programs_found=len(programs),
+                                  sources_found=len(sources),
+                                  children_enqueued=enqueued_children,
+                                  queue_pending=queue.size())
+
+                # Heartbeat every 30s during long expansion phases
+                elapsed = time.monotonic() - l2_start_time
+                if elapsed > 30 and entity_n % 3 == 0:
+                    log_heartbeat(
+                        stage="l2_queue_expansion",
+                        batch=f"{entity_n}/{entity_total}",
+                        items_so_far=len(all_programs),
+                        elapsed_s=elapsed,
+                    )
+
+            except Exception as exc:
+                self._api_calls += 1
+                logger.warning("[graph v6] entity expansion failed for '%s': %s",
+                               entity_name, exc)
+                yield self._event("entity_expansion_complete",
+                                  entity_id=entity_id,
+                                  entity_name=entity_name,
+                                  entity_n=entity_n,
+                                  entity_total=entity_total,
+                                  depth=item.depth,
+                                  status="failed",
+                                  error=str(exc),
+                                  programs_found=0)
 
         # Dedup programs
         deduped = self._dedupe_programs(all_programs)
@@ -347,13 +507,20 @@ class DiscoveryGraph:
         manifest.coverage_summary = coverage_summary
         await self.db.commit()
 
+        log_stage(
+            "l2_queue_expansion", status="complete",
+            model=getattr(self.llm, "model", ""),
+            sources=len(all_sources), programs=len(deduped),
+        )
         yield self._event("complete",
                           manifest_id=self.manifest_id,
                           total_entities=len(all_entities),
                           total_sources=len(all_sources),
                           total_programs=len(deduped),
+                          api_calls=self._api_calls,
                           coverage_score=assessment.completeness_score,
                           coverage_summary=coverage_summary,
+                          queue_stats=queue.stats(),
                           seed_recovery_count=total_seed_recovery,
                           seed_recovery_rate=seed_recovery_rate,
                           seed_match_rate_by_topic={
@@ -367,12 +534,22 @@ class DiscoveryGraph:
         sectors: list[dict],
         instruction_text: str,
         sector_concurrency: int = 3,
+        max_entities_per_sector: int = 50,
+        max_api_calls: int = 200,
     ) -> AsyncGenerator[dict, None]:
         """Run all sector calls, yielding SSE events and internal result events."""
         total = len(sectors)
 
         # Run in batches of sector_concurrency to respect API rate limits
         for batch_start in range(0, total, sector_concurrency):
+            # Safety cap check before launching batch
+            if self._api_calls >= max_api_calls:
+                logger.warning(
+                    "[graph v6] API call limit reached (%d/%d) — skipping remaining sectors",
+                    self._api_calls, max_api_calls,
+                )
+                break
+
             batch = sectors[batch_start:batch_start + sector_concurrency]
 
             # Yield sector_start events before launching batch
@@ -394,12 +571,13 @@ class DiscoveryGraph:
                 for idx, sector in enumerate(batch)
             ]
             results = await asyncio.gather(*tasks, return_exceptions=True)
+            self._api_calls += len(batch)
 
             for sector, result in zip(batch, results):
                 if isinstance(result, Exception):
                     # region agent log
                     _debug_log(
-                        run_id="pre-fix",
+                        run_id="v6",
                         hypothesis_id="H1",
                         location="graph_discovery.py:_run_l1_sectors",
                         message="sector_task_exception",
@@ -411,7 +589,7 @@ class DiscoveryGraph:
                         },
                     )
                     # endregion
-                    logger.warning("[graph v5] sector '%s' failed: %s", sector["key"], result)
+                    logger.warning("[graph v6] sector '%s' failed: %s", sector["key"], result)
                     yield self._event("sector_complete",
                                       sector_key=sector["key"],
                                       sector_label=sector["label"],
@@ -427,6 +605,15 @@ class DiscoveryGraph:
                 else:
                     entities = result.get("administering_entities", [])
                     sources = result.get("sources", [])
+
+                    # Enforce per-sector entity cap
+                    if len(entities) > max_entities_per_sector:
+                        logger.warning(
+                            "[graph v6] sector '%s' returned %d entities, capping at %d",
+                            sector["key"], len(entities), max_entities_per_sector,
+                        )
+                        entities = entities[:max_entities_per_sector]
+
                     yield self._event("sector_complete",
                                       sector_key=sector["key"],
                                       sector_label=sector["label"],
@@ -466,11 +653,15 @@ class DiscoveryGraph:
             search_hints_block=hints_block,
             completeness_block=_build_completeness_block(sector),
         )
-        prompt = sector_header + instruction_text
+
+        # Inject sector-specific prompt content into instruction text
+        sector_instruction = _inject_sector_prompt(instruction_text, sector)
+
+        prompt = sector_header + sector_instruction
 
         # region agent log
         _debug_log(
-            run_id="pre-fix",
+            run_id="v6",
             hypothesis_id="H3",
             location="graph_discovery.py:_discover_sector",
             message="sector_prompt_ready",
@@ -479,16 +670,17 @@ class DiscoveryGraph:
                 "sector_label": sector.get("label", ""),
                 "prompt_chars": len(prompt),
                 "header_chars": len(sector_header),
-                "instruction_chars": len(instruction_text),
+                "instruction_chars": len(sector_instruction),
                 "search_hints_count": len(search_hints),
                 "completeness_count": len(sector.get("completeness_requirements", [])),
+                "has_sector_prompt": bool(sector.get("sector_prompt")),
             },
         )
         # endregion
 
         logger.debug(
-            "[graph v5] sector '%s' prompt assembled — prompt_chars=%d instruction_chars=%d header_chars=%d",
-            sector["key"], len(prompt), len(instruction_text), len(sector_header),
+            "[graph v6] sector '%s' prompt assembled — prompt_chars=%d instruction_chars=%d header_chars=%d",
+            sector["key"], len(prompt), len(sector_instruction), len(sector_header),
         )
 
         try:
@@ -502,7 +694,7 @@ class DiscoveryGraph:
         except Exception as exc:
             # region agent log
             _debug_log(
-                run_id="pre-fix",
+                run_id="v6",
                 hypothesis_id="H1",
                 location="graph_discovery.py:_discover_sector",
                 message="sector_call_error",
@@ -518,7 +710,7 @@ class DiscoveryGraph:
 
         # region agent log
         _debug_log(
-            run_id="pre-fix",
+            run_id="v6",
             hypothesis_id="H2",
             location="graph_discovery.py:_discover_sector",
             message="sector_call_response",
@@ -531,7 +723,7 @@ class DiscoveryGraph:
         # endregion
 
         logger.debug(
-            "[graph v5] sector '%s' raw response — text_len=%d head=%r tail=%r",
+            "[graph v6] sector '%s' raw response — text_len=%d head=%r tail=%r",
             sector["key"], len(text), text[:500], text[-200:] if len(text) > 200 else "",
         )
 
@@ -539,7 +731,7 @@ class DiscoveryGraph:
 
         # region agent log
         _debug_log(
-            run_id="pre-fix",
+            run_id="v6",
             hypothesis_id="H2",
             location="graph_discovery.py:_discover_sector",
             message="sector_parse_result",
@@ -555,7 +747,7 @@ class DiscoveryGraph:
 
         if not result:
             logger.warning(
-                "[graph v5] sector '%s' JSON parse produced empty result — text_len=%d tail=%r",
+                "[graph v6] sector '%s' JSON parse produced empty result — text_len=%d tail=%r",
                 sector["key"], len(text), text[-300:] if len(text) > 300 else text,
             )
 
@@ -565,58 +757,7 @@ class DiscoveryGraph:
 
         return result
 
-    # ── L2: Per-Entity Program Expansion ─────────────────────────────────
-
-    async def _run_l2_entity_expansion(
-        self,
-        entities: list[dict],
-        instruction_text: str,
-        seed_index: dict[str, list[dict]],
-    ) -> AsyncGenerator[dict, None]:
-        """Expand each L1 entity to find its programs, yielding SSE events."""
-        total = len(entities)
-
-        for idx, entity in enumerate(entities, start=1):
-            yield self._event("entity_expansion_start",
-                              entity_id=entity.get("id", ""),
-                              entity_name=entity.get("name", ""),
-                              entity_n=idx,
-                              entity_total=total)
-            try:
-                result = await asyncio.wait_for(
-                    self._expand_entity(entity=entity, instruction_text=instruction_text),
-                    timeout=180.0,
-                )
-                programs = result.get("programs", [])
-                sources = result.get("sources", [])
-                yield self._event("entity_expansion_complete",
-                                  entity_id=entity.get("id", ""),
-                                  entity_name=entity.get("name", ""),
-                                  entity_n=idx,
-                                  entity_total=total,
-                                  programs_found=len(programs),
-                                  sources_found=len(sources))
-                yield {"event": "_l2_entity_result", "data": {
-                    "entity_id": entity.get("id", ""),
-                    "programs": programs,
-                    "sources": sources,
-                }}
-            except Exception as exc:
-                logger.warning("[graph v5] entity expansion failed for '%s': %s",
-                               entity.get("name", ""), exc)
-                yield self._event("entity_expansion_complete",
-                                  entity_id=entity.get("id", ""),
-                                  entity_name=entity.get("name", ""),
-                                  entity_n=idx,
-                                  entity_total=total,
-                                  status="failed",
-                                  error=str(exc),
-                                  programs_found=0)
-                yield {"event": "_l2_entity_result", "data": {
-                    "entity_id": entity.get("id", ""),
-                    "programs": [],
-                    "sources": [],
-                }}
+    # ── L2+: Entity Expansion (called from queue loop) ───────────────────
 
     async def _expand_entity(
         self,

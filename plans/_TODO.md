@@ -10,13 +10,13 @@ updated: 2026-03-02
 
 - None
 
-## Up Next — V5 Engine
+## Up Next — V6 Verification & Hardening
 
-- [ ] **Planning:** New agent reads `prompts/006-handoff-discovery-v5-graph-bfs-engine.md` and produces `plans/NNN-plan-discovery-v5-bfs-engine.md` `#status/ready #priority/critical #agent/claude-desktop`
-- [ ] **V5 Build:** Implement plan — rewrite `graph_discovery.py` as true BFS engine, 6 sector L1 calls, per-entity L2 expansion `#status/blocked-by/planning #priority/critical #agent/cursor`
-- [ ] **Prereq:** Expand `AuthorityType` enum + `native_enum=False` + DB reset (can land before or as first V5 commit) `#status/ready #priority/critical #agent/cursor`
-- [ ] **V4 seed validation**: run with seed file after baseline confirmed → target 50%+ seed recovery `#status/blocked-by/v4-baseline #priority/critical #agent/claude-code`
-- [ ] **Frontend discovery UI**: surface `discovery_level`, per-topic match rates, and cumulative progress in results panel `#status/backlog #priority/important #agent/cursor`
+- [ ] **Live test K=1**: run with `DPA_Sectors_v3.json` + `DPA_Prompt_v9.md`, verify all sectors return entities > 0 `#status/ready #priority/critical #agent/claude-code`
+- [ ] **Live test K=2**: confirm queue expansion discovers programs and sub-entities `#status/blocked-by/k1-test #priority/critical #agent/claude-code`
+- [ ] **AuthorityType migration**: Expand enum (state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal) + `native_enum=False` + DB reset `#status/ready #priority/critical #agent/cursor`
+- [ ] **Frontend queue stats**: surface queue_stats (depth, pending, api_calls) in AgentProgressPanel `#status/backlog #priority/important #agent/cursor`
+- [ ] **Seed validation**: run with seed file after K=2 confirmed → target 50%+ seed recovery `#status/blocked-by/k2-test #priority/critical #agent/claude-code`
 
 ## Up Next — Hardening Backlog
 
@@ -41,6 +41,8 @@ updated: 2026-03-02
 
 ## Recently Completed
 
+- [x] **DPA V6 RLM Queue-Driven BFS Engine** — full rewrite: discovery_queue.py, graph_discovery.py V6, call_logger.py, DPA_Prompt_v9.md, DPA_Sectors_v3.json, 3-provider LLM logging (311 tests) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-03)
+- [x] **DPA V5 BFS Engine** — committed as `752c0b4`, 6 parallel sector calls, per-entity expansion, truncation recovery (311 tests) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-03)
 - [x] **DPA V4 Prompt-Driven Discovery** — full build complete (9 commits, 306 tests) `#status/done #priority/critical #agent/cursor` @completed(2026-03-02)
   - [x] Commit 1: `docs/005-doc-base-instruction-template.md` — 7-section instruction template
   - [x] Commit 2: `prompts/DPA_Prompt_v5.md` — DPA prompt rewritten to template contract

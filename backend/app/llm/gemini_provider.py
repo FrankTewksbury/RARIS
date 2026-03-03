@@ -8,6 +8,7 @@ from google.genai import errors, types
 
 from app.config import settings
 from app.llm.base import Citation, LLMProvider
+from app.llm.call_logger import LLMCallRecord, log_llm_call_error, log_llm_call_start, log_llm_call_success
 
 logger = logging.getLogger(__name__)
 
@@ -174,15 +175,44 @@ class GeminiProvider(LLMProvider):
     async def complete(self, messages: list[dict], **kwargs) -> str:
         contents = self._build_contents(messages)
         config = self._build_config(kwargs)
-        return await self._call_with_resilience(contents, config, label="complete")
+        record = LLMCallRecord(
+            provider="gemini", model=self.model, method="complete",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
+        )
+        log_llm_call_start(record)
+        try:
+            result = await self._call_with_resilience(contents, config, label="complete")
+            record.finish(response_chars=len(result))
+            log_llm_call_success(record)
+            return result
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = _error_code(exc)
+            log_llm_call_error(record)
+            raise
 
     async def stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
-        # Delegate to the resilient non-streaming path and yield as a single chunk.
-        # Streaming with per-chunk retry is not required by the current pipeline.
         contents = self._build_contents(messages)
         config = self._build_config(kwargs)
-        text = await self._call_with_resilience(contents, config, label="stream")
-        yield text
+        record = LLMCallRecord(
+            provider="gemini", model=self.model, method="stream",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
+        )
+        log_llm_call_start(record)
+        try:
+            text = await self._call_with_resilience(contents, config, label="stream")
+            record.finish(response_chars=len(text))
+            log_llm_call_success(record)
+            yield text
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = _error_code(exc)
+            log_llm_call_error(record)
+            raise
 
     async def complete_grounded(
         self, messages: list[dict], **kwargs
@@ -195,9 +225,22 @@ class GeminiProvider(LLMProvider):
             maximum_remote_calls=settings.gemini_max_remote_calls,
         )
 
-        response = await self._call_with_resilience(
-            contents, config, label="grounded", return_response=True,
+        record = LLMCallRecord(
+            provider="gemini", model=self.model, method="complete_grounded",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
         )
+        log_llm_call_start(record)
+        try:
+            response = await self._call_with_resilience(
+                contents, config, label="grounded", return_response=True,
+            )
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = _error_code(exc)
+            log_llm_call_error(record)
+            raise
 
         citations: list[Citation] = []
         text = response.text or ""
@@ -238,4 +281,6 @@ class GeminiProvider(LLMProvider):
                                 title=getattr(web, "title", "") or "",
                             )
                         )
+        record.finish(response_chars=len(text))
+        log_llm_call_success(record)
         return text, citations

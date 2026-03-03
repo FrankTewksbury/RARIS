@@ -58,6 +58,15 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = "INFO"
 
+    # Discovery safety caps
+    max_api_calls: int = 200  # Maximum LLM calls per discovery run
+    max_discovery_depth: int = 3  # Maximum BFS depth (queue won't enqueue beyond this)
+    max_entities_per_sector: int = 50  # Cap entities returned per sector call
+
+    # LLM call logging
+    llm_logging: str = "ON"  # ON|OFF — master toggle for structured LLM call logs
+    llm_log_prompts: str = "OFF"  # ON|OFF — whether to log full prompt content
+
     def validate_on_startup(self) -> None:
         """Log warnings for missing or misconfigured settings."""
         provider_key_map = {

@@ -1,9 +1,13 @@
+import logging
 from collections.abc import AsyncIterator
 
 import anthropic
 
 from app.config import settings
 from app.llm.base import Citation, LLMProvider
+from app.llm.call_logger import LLMCallRecord, log_llm_call_error, log_llm_call_start, log_llm_call_success
+
+logger = logging.getLogger(__name__)
 
 
 class AnthropicProvider(LLMProvider):
@@ -28,8 +32,24 @@ class AnthropicProvider(LLMProvider):
         if system_msg:
             params["system"] = system_msg
 
-        response = await self.client.messages.create(**params)
-        return response.content[0].text
+        record = LLMCallRecord(
+            provider="anthropic", model=params["model"], method="complete",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
+        )
+        log_llm_call_start(record)
+        try:
+            response = await self.client.messages.create(**params)
+            text = response.content[0].text
+            record.finish(response_chars=len(text))
+            log_llm_call_success(record)
+            return text
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = getattr(exc, "status_code", None)
+            log_llm_call_error(record)
+            raise
 
     async def stream(self, messages: list[dict], **kwargs) -> AsyncIterator[str]:
         system_msg = None
@@ -48,9 +68,26 @@ class AnthropicProvider(LLMProvider):
         if system_msg:
             params["system"] = system_msg
 
-        async with self.client.messages.stream(**params) as stream:
-            async for text in stream.text_stream:
-                yield text
+        record = LLMCallRecord(
+            provider="anthropic", model=params["model"], method="stream",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
+        )
+        log_llm_call_start(record)
+        total_chars = 0
+        try:
+            async with self.client.messages.stream(**params) as stream:
+                async for text in stream.text_stream:
+                    total_chars += len(text)
+                    yield text
+            record.finish(response_chars=total_chars)
+            log_llm_call_success(record)
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = getattr(exc, "status_code", None)
+            log_llm_call_error(record)
+            raise
 
     def _split_system(self, messages: list[dict]) -> tuple[str | None, list[dict]]:
         """Separate system message from chat messages."""
@@ -78,14 +115,26 @@ class AnthropicProvider(LLMProvider):
         if system_msg:
             params["system"] = system_msg
 
-        response = await self.client.messages.create(**params)
+        record = LLMCallRecord(
+            provider="anthropic", model=params["model"], method="complete_grounded",
+            prompt_chars=sum(len(m.get("content", "")) for m in messages),
+            stage=kwargs.get("stage", ""),
+        )
+        log_llm_call_start(record)
+        try:
+            response = await self.client.messages.create(**params)
+        except Exception as exc:
+            record.finish()
+            record.error_message = str(exc)
+            record.error_code = getattr(exc, "status_code", None)
+            log_llm_call_error(record)
+            raise
 
         text_parts: list[str] = []
         citations: list[Citation] = []
         for block in response.content:
             if block.type == "text":
                 text_parts.append(block.text)
-                # Extract citations from text block annotations if present
                 for annotation in getattr(block, "annotations", None) or []:
                     if getattr(annotation, "type", None) == "web_citation":
                         citations.append(
@@ -95,4 +144,7 @@ class AnthropicProvider(LLMProvider):
                             )
                         )
 
-        return "\n".join(text_parts), citations
+        text = "\n".join(text_parts)
+        record.finish(response_chars=len(text))
+        log_llm_call_success(record)
+        return text, citations
