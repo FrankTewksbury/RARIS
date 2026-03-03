@@ -66,6 +66,8 @@ class GeminiProvider(LLMProvider):
             config.thinking_config = types.ThinkingConfig(thinking_budget=int(budget))
         if "temperature" in kwargs:
             config.temperature = kwargs["temperature"]
+        if "max_tokens" in kwargs:
+            config.max_output_tokens = int(kwargs["max_tokens"])
         return config
 
     @staticmethod
@@ -97,18 +99,6 @@ class GeminiProvider(LLMProvider):
         """
         last_exc: Exception = RuntimeError("No attempts made")
         model_idx = 0
-        # region agent log
-        import time as _time
-        _rlog_path = "/workspace/.cursor/debug-169697.log"
-        try:
-            import pathlib as _pl
-            _pl.Path(_rlog_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(_rlog_path, "a") as _f:
-                import json as _j
-                _f.write(_j.dumps({"sessionId": "169697", "runId": "169697", "hypothesisId": "H3-H4", "location": "gemini_provider.py:_call_with_resilience", "message": "resilience wrapper entered", "data": {"label": label, "fallback_chain": self._fallback_chain, "model": self.model}, "timestamp": int(_time.time() * 1000)}) + "\n")
-        except Exception:
-            pass
-        # endregion
 
         for attempt in range(_MAX_ATTEMPTS):
             chain_entry = self._fallback_chain[min(model_idx, len(self._fallback_chain) - 1)]
@@ -201,6 +191,9 @@ class GeminiProvider(LLMProvider):
         contents = self._build_contents(messages)
         config = self._build_config(kwargs)
         config.tools = [types.Tool(google_search=types.GoogleSearch())]
+        config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
+            maximum_remote_calls=64,
+        )
 
         response = await self._call_with_resilience(
             contents, config, label="grounded", return_response=True,
@@ -208,6 +201,29 @@ class GeminiProvider(LLMProvider):
 
         citations: list[Citation] = []
         text = response.text or ""
+        if not text and response.candidates:
+            # response.text returns None when all parts are thought-only or no parts exist.
+            # Manually collect non-thought text parts as fallback.
+            candidate = response.candidates[0]
+            finish_reason = getattr(candidate, "finish_reason", None)
+            if candidate.content and candidate.content.parts:
+                parts_text = "".join(
+                    p.text for p in candidate.content.parts
+                    if isinstance(p.text, str) and not getattr(p, "thought", False)
+                )
+                text = parts_text
+                if not text:
+                    logger.warning(
+                        "[gemini] grounded response has no text parts finish_reason=%s parts=%d",
+                        finish_reason,
+                        len(candidate.content.parts),
+                    )
+            else:
+                logger.warning(
+                    "[gemini] grounded response empty finish_reason=%s candidates=%d",
+                    finish_reason,
+                    len(response.candidates),
+                )
         if response.candidates:
             candidate = response.candidates[0]
             gm = getattr(candidate, "grounding_metadata", None)

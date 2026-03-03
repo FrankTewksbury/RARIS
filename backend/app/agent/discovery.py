@@ -93,13 +93,101 @@ def _debug_log(message: str, data: dict, hypothesis_id: str, run_id: str = "init
 
 
 def _extract_json(text: str) -> dict:
-    """Extract JSON from LLM response, handling markdown code blocks."""
-    # Try to find JSON in code blocks first
+    """Extract the first valid JSON object from LLM response text.
+
+    Strategy (in order):
+    1. Markdown code fence (```json ... ```) — including truncated fences with no closing ```
+    2. Brace-balanced extraction — find outermost { ... } in the text
+    3. Direct parse of the full text (legacy fallback)
+
+    Returns an empty dict if text is empty or no JSON object found.
+    """
+    if not text or not text.strip():
+        return {}
+
+    # 1a. Complete markdown fences
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
     if match:
-        return json.loads(match.group(1))
-    # Try parsing the whole thing
+        try:
+            return json.loads(match.group(1))
+        except json.JSONDecodeError:
+            pass  # May be truncated inside fence — fall through to brace extraction
+
+    # 1b. Opened fence with no closing ``` (truncated response)
+    fence_open = re.search(r"```(?:json)?\s*\n?(.*)", text, re.DOTALL)
+    if fence_open:
+        inner = fence_open.group(1)
+        # Try brace extraction on the inner content
+        start = inner.find("{")
+        if start != -1:
+            # Find the deepest balanced close we can
+            result = _extract_json_object(inner, start)
+            if result is not None:
+                return result
+
+    # 2. Brace-balanced extraction on raw text
+    start = text.find("{")
+    if start != -1:
+        result = _extract_json_object(text, start)
+        if result is not None:
+            return result
+
+    # 3. Direct parse as last resort
     return json.loads(text)
+
+
+def _extract_json_object(text: str, start: int) -> dict | None:
+    """Find outermost balanced JSON object starting at `start`.
+
+    If the text is truncated (no matching close brace), strips trailing
+    incomplete fields and closes any open arrays/objects to recover a
+    parseable partial result.
+    """
+    depth = 0
+    in_string = False
+    escape_next = False
+    last_valid_close = start  # position of last } that brought depth back to 0
+
+    for i, ch in enumerate(text[start:], start=start):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"' and not escape_next:
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                # Complete object found
+                candidate = text[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    return None
+            if depth == 1:
+                # Closed a nested object — this is a safe recovery point
+                last_valid_close = i
+
+    # Truncated response — recover by closing at the last safe nested close
+    # Strip everything from the last complete field onward, then close the root
+    if last_valid_close > start:
+        # Build a candidate by closing any trailing comma and closing the root
+        partial = text[start:last_valid_close + 1]
+        partial = partial.rstrip().rstrip(",")
+        candidate = partial + "\n}"
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 def _safe_enum(enum_cls, value, default=None):

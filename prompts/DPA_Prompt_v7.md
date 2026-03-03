@@ -158,12 +158,7 @@ Return a single JSON object:
       "verification_state": "verified|candidate_only|verification_pending"
     }
   ],
-  "funding_streams": [],
-  "queue_state": {
-    "visited_entities": [],
-    "visited_sources": [],
-    "next_actions": []
-  }
+  "funding_streams": []
 }
 
 SEARCH BEHAVIOR (query generation requirements for your assigned sector)
