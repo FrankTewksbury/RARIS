@@ -96,7 +96,7 @@ export function useSSE() {
         events: [...s.events, {
           step: `expand:${data.entity_id}`,
           status: "running",
-          message: `Expanding [${data.entity_n}/${data.entity_total}]: ${data.entity_name}`,
+          message: `[L${data.depth + 1}][${data.jurisdiction_code || data.jurisdiction || '?'}] ${data.entity_name} (${data.entity_n}/${data.entity_total})`,
           ...data,
         }],
       }));
@@ -149,7 +149,8 @@ export function useSSE() {
     });
 
     eventSource.addEventListener("error", (e) => {
-      const data = JSON.parse((e as MessageEvent).data || "{}");
+      const raw = (e as MessageEvent).data;
+      const data = raw ? JSON.parse(raw) : {};
       setState((s) => ({
         ...s,
         isConnected: false,
@@ -159,7 +160,11 @@ export function useSSE() {
     });
 
     eventSource.onerror = () => {
-      setState((s) => ({ ...s, isConnected: false }));
+      setState((s) => ({
+        ...s,
+        isConnected: false,
+        error: s.error || "Live progress stream disconnected. The run may have completed or the backend may have restarted.",
+      }));
       eventSource.close();
     };
   }, []);
@@ -169,5 +174,10 @@ export function useSSE() {
     setState((s) => ({ ...s, isConnected: false }));
   }, []);
 
-  return { ...state, connect, disconnect };
+  const reset = useCallback(() => {
+    sourceRef.current?.close();
+    setState({ events: [], isConnected: false, error: null });
+  }, []);
+
+  return { ...state, connect, disconnect, reset };
 }

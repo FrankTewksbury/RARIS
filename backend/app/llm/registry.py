@@ -26,11 +26,13 @@ def resolve_provider_name(name: str | None = None) -> str:
     return provider_name
 
 
-def get_provider(name: str | None = None) -> LLMProvider:
+def get_provider(name: str | None = None, model: str | None = None) -> LLMProvider:
     provider_name = resolve_provider_name(name)
     if provider_name not in _providers:
         raise ValueError(
             f"Unknown LLM provider: {provider_name}. "
             f"Available: {', '.join(_providers.keys())}"
         )
+    if model:
+        return _providers[provider_name](model=model)
     return _providers[provider_name]()

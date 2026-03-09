@@ -51,9 +51,7 @@ OPERATING RULES (anti-hallucination + evidence discipline)
 - Do not invent program names, amounts, thresholds, or dates.
 
 CORE DISCOVERY CONTROL LOGIC
-Use a prioritized queue:
-- Queue items: {target_type: entity|source, priority_rank, discovered_from, urls}
-- Maintain VisitedEntities and VisitedSources.
+- priority is to obtain the greatest discovery breadth with validated source data and absolutely no hallucinations. 
 
 INITIALIZATION DISCOVERY
 For the provided {FERERAL/STATE/CITY/COUNTY}, identify authoritative starting points for your assigned sector, then enqueue them:

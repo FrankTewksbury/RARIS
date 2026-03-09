@@ -33,7 +33,7 @@ export function CoverageSummary({ coverage }: Props) {
 
       <div className="coverage-grid">
         <div className="chart-section">
-          <h3>By Jurisdiction</h3>
+          <h3>By Geo Scope</h3>
           <ResponsiveContainer width="100%" height={200}>
             <BarChart data={jurisdictionData}>
               <XAxis dataKey="name" />
@@ -45,7 +45,7 @@ export function CoverageSummary({ coverage }: Props) {
         </div>
 
         <div className="chart-section">
-          <h3>By Type</h3>
+          <h3>By Status</h3>
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
               <Pie data={typeData} dataKey="value" nameKey="name" outerRadius={70} label>

@@ -330,6 +330,13 @@ td {
 tr.needs-review { background: rgba(234, 179, 8, 0.05); }
 tr:hover { background: rgba(59, 130, 246, 0.05); }
 
+.cell-truncate {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 td input {
   background: var(--bg);
   border: 1px solid var(--primary);

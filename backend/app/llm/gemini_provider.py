@@ -69,6 +69,8 @@ class GeminiProvider(LLMProvider):
             config.temperature = kwargs["temperature"]
         if "max_tokens" in kwargs:
             config.max_output_tokens = int(kwargs["max_tokens"])
+        if "response_mime_type" in kwargs:
+            config.response_mime_type = kwargs["response_mime_type"]
         return config
 
     @staticmethod

@@ -13,33 +13,26 @@ from app.llm.base import Citation, LLMProvider
 # ---------------------------------------------------------------------------
 
 class MockLLM(LLMProvider):
-    """Mock LLM that returns canned JSON responses for V5 BFS engine.
+    """Mock LLM that returns canned JSON responses for V6 BFS engine.
 
-    Routing logic:
-    - SECTOR SCOPE header → sector discovery call → returns administering_entities[]
+    Routing logic (via complete()):
     - ENTITY EXPANSION CALL header → entity expansion call → returns programs[]
+    - Otherwise (SECTOR SCOPE header) → sector discovery call → returns administering_entities[]
     """
 
     def __init__(self, responses: dict[str, str] | None = None):
         self._responses = responses or {}
         self._call_count = 0
-        self.grounded_calls: list[dict] = []
+        self.calls: list[dict] = []
 
     async def complete(self, messages, **kwargs):
         self._call_count += 1
-        return '{"programs": []}'
-
-    async def stream(self, messages, **kwargs):
-        yield '{"programs": []}'
-
-    async def complete_grounded(self, messages, **kwargs):
-        self._call_count += 1
         prompt = messages[-1]["content"] if messages else ""
-        self.grounded_calls.append({"prompt": prompt[:300], "kwargs": kwargs})
+        self.calls.append({"prompt": prompt[:1000], "kwargs": kwargs})
 
-        if "entity expansion call" in prompt.lower():
+        if "## entity expansion" in prompt.lower():
             # L2 entity expansion — return programs for this entity
-            text = self._responses.get("expansion", json.dumps({
+            return self._responses.get("expansion", json.dumps({
                 "programs": [
                     {
                         "name": "Example DPA Program",
@@ -73,7 +66,7 @@ class MockLLM(LLMProvider):
             }))
         else:
             # L1 sector discovery — return administering_entities[]
-            text = self._responses.get("sector", json.dumps({
+            return self._responses.get("sector", json.dumps({
                 "sector_key": "federal",
                 "coverage_summary": {
                     "entities_found": 1,
@@ -102,6 +95,11 @@ class MockLLM(LLMProvider):
                 },
             }))
 
+    async def stream(self, messages, **kwargs):
+        yield '{"programs": []}'
+
+    async def complete_grounded(self, messages, **kwargs):
+        text = await self.complete(messages, **kwargs)
         citations = [Citation(url="https://hud.gov", title="HUD")]
         return text, citations
 
@@ -147,11 +145,11 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-001")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         sector_starts = [e for e in events if e["event"] == "sector_start"]
-        assert len(sector_starts) == 6  # default 6 sectors
+        assert len(sector_starts) == 3  # 3 neutral runtime sectors (no sector file)
 
     @pytest.mark.asyncio
     async def test_run_emits_sector_complete_events(self, mock_db):
@@ -160,11 +158,11 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-002")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         sector_completes = [e for e in events if e["event"] == "sector_complete"]
-        assert len(sector_completes) == 6
+        assert len(sector_completes) == 3  # 3 neutral runtime sectors (no sector file)
 
     @pytest.mark.asyncio
     async def test_run_emits_l1_assembly_complete(self, mock_db):
@@ -173,7 +171,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-003")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         assembly_events = [e for e in events if e["event"] == "l1_assembly_complete"]
@@ -188,7 +186,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-004")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         complete_events = [e for e in events if e["event"] == "complete"]
@@ -202,7 +200,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-005")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=2):
+        async for event in graph.run("Test manifest", k_depth=2, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         expansion_starts = [e for e in events if e["event"] == "entity_expansion_start"]
@@ -220,7 +218,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-006")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         expansion_events = [
@@ -241,7 +239,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         sector_starts = [e for e in events if e["event"] == "sector_start"]
@@ -254,12 +252,6 @@ class TestDiscoveryGraphV5Events:
 
         class FailOnFirstCallLLM(LLMProvider):
             async def complete(self, messages, **kwargs):
-                return '{}'
-
-            async def stream(self, messages, **kwargs):
-                yield '{}'
-
-            async def complete_grounded(self, messages, **kwargs):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
@@ -269,7 +261,14 @@ class TestDiscoveryGraphV5Events:
                     "programs": [],
                     "funding_streams": [],
                     "queue_state": {"visited_entities": [], "visited_sources": [], "next_actions": []},
-                }), []
+                })
+
+            async def stream(self, messages, **kwargs):
+                yield '{}'
+
+            async def complete_grounded(self, messages, **kwargs):
+                text = await self.complete(messages, **kwargs)
+                return text, []
 
         llm = FailOnFirstCallLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-008")
@@ -281,7 +280,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         # All 3 sectors should complete (one with failed status)
@@ -306,6 +305,7 @@ class TestDiscoveryGraphV5Events:
             k_depth=2,
             seed_index={"cdfi": [{"name": "CDFI Grant"}]},
             seed_programs=[{"name": "CDFI Grant", "program_type": "cdfi"}],
+            instruction_text="TEST INSTRUCTION",
         ):
             events.append(event)
 
@@ -314,15 +314,15 @@ class TestDiscoveryGraphV5Events:
         assert "seed_match_rate_by_topic" in complete["data"]
 
     @pytest.mark.asyncio
-    async def test_uses_grounded_calls(self, mock_db):
-        """Engine uses complete_grounded for all LLM calls."""
+    async def test_uses_complete_calls(self, mock_db):
+        """Engine uses complete() for all LLM calls."""
         llm = MockLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-010")
 
-        async for _ in graph.run("Test manifest", k_depth=1):
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
             pass
 
-        assert len(llm.grounded_calls) >= 6  # at least 6 sector calls
+        assert len(llm.calls) >= 3  # at least 3 neutral runtime sector calls
 
     @pytest.mark.asyncio
     async def test_sector_scope_header_injected(self, mock_db):
@@ -334,10 +334,10 @@ class TestDiscoveryGraphV5Events:
             pass
 
         sector_calls = [
-            c for c in llm.grounded_calls
+            c for c in llm.calls
             if "sector scope" in c["prompt"].lower()
         ]
-        assert len(sector_calls) >= 6
+        assert len(sector_calls) >= 3  # 3 neutral runtime sector calls
 
     @pytest.mark.asyncio
     async def test_instruction_text_passed_to_calls(self, mock_db):
@@ -350,9 +350,9 @@ class TestDiscoveryGraphV5Events:
             pass
 
         calls_with_marker = [
-            c for c in llm.grounded_calls if marker in c["prompt"]
+            c for c in llm.calls if marker in c["prompt"]
         ]
-        assert len(calls_with_marker) >= 6
+        assert len(calls_with_marker) >= 3  # 3 neutral runtime sector calls each include instruction
 
     @pytest.mark.asyncio
     async def test_persists_entities_and_programs(self, mock_db):
@@ -360,7 +360,7 @@ class TestDiscoveryGraphV5Events:
         llm = MockLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-013")
 
-        async for _ in graph.run("Test manifest", k_depth=2):
+        async for _ in graph.run("Test manifest", k_depth=2, instruction_text="TEST INSTRUCTION"):
             pass
 
         # db.add should have been called for entities, sources, programs, assessment
@@ -379,7 +379,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
             events.append(event)
 
         complete = [e for e in events if e["event"] == "complete"][0]

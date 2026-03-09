@@ -83,6 +83,7 @@ export interface ManifestDetail extends ManifestSummary {
 export interface GenerateRequest {
   manifest_name: string;
   llm_provider: string;
+  llm_model?: string;
   k_depth?: number;
   geo_scope?: "national" | "state" | "municipal";
   target_segments?: string[];

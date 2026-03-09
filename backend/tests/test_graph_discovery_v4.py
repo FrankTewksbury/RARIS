@@ -94,7 +94,7 @@ def _make_llm_mock(return_bodies=None, return_sources=None, return_programs=None
     })
 
     llm = MagicMock()
-    llm.complete_grounded = AsyncMock(return_value=(sector_response, []))
+    llm.complete = AsyncMock(return_value=sector_response)
     return llm
 
 
@@ -153,10 +153,10 @@ async def test_sector_receives_full_instruction_text():
         )
     )
 
-    assert llm.complete_grounded.called
+    assert llm.complete.called
 
     # Check first sector call contains instruction text verbatim
-    first_call_args = llm.complete_grounded.call_args_list[0]
+    first_call_args = llm.complete.call_args_list[0]
     messages = first_call_args[0][0]
 
     user_message = next(m["content"] for m in messages if m["role"] == "user")
@@ -183,7 +183,7 @@ async def test_sector_call_has_sector_scope_header():
         )
     )
 
-    first_call_args = llm.complete_grounded.call_args_list[0]
+    first_call_args = llm.complete.call_args_list[0]
     messages = first_call_args[0][0]
     user_message = next(m["content"] for m in messages if m["role"] == "user")
 
@@ -214,14 +214,14 @@ async def test_entity_expansion_prompts_reference_entity_data():
         )
     )
 
-    # k_depth=2 with 6 sectors each returning 2 entities = 12 expansion calls
-    # Total calls: 6 sector calls + up to 12 expansion calls
-    assert llm.complete_grounded.call_count >= 7  # at least 6 sector + 1 expansion
+    # k_depth=2 with 3 neutral runtime sectors each returning 2 entities = 6 queue entries
+    # Total calls: 3 sector calls + up to 2 expansion calls (dedup via visited set)
+    assert llm.complete.call_count >= 4  # at least 3 sector + 1 expansion
 
-    # Find entity expansion calls (they contain "ENTITY EXPANSION CALL")
+    # Find entity expansion calls (they contain "## ENTITY EXPANSION")
     expansion_calls = [
-        call for call in llm.complete_grounded.call_args_list
-        if "entity expansion call" in call[0][0][-1]["content"].lower()
+        call for call in llm.complete.call_args_list
+        if "## entity expansion" in call[0][0][-1]["content"].lower()
     ]
     assert len(expansion_calls) >= 1
 
@@ -340,21 +340,21 @@ async def test_low_confidence_programs_flagged():
 
 @pytest.mark.asyncio
 async def test_manifest_name_not_in_sector_prompt_without_instruction():
-    """Without an instruction file, engine falls back to a generic prompt."""
+    """With a minimal instruction, engine uses generic discovery prompt."""
     llm = _make_llm_mock()
     db = _make_db_mock()
 
     manifest_name = "DPA National Scan March 2026"
     engine = DiscoveryGraph(llm=llm, db=db, manifest_id="test-manifest-007")
     await _collect_events(
-        engine.run(manifest_name, k_depth=1, instruction_text="")
+        engine.run(manifest_name, k_depth=1, instruction_text="## 1. Domain Definition\nDown payment assistance programs.")
     )
 
-    first_call_args = llm.complete_grounded.call_args_list[0]
+    first_call_args = llm.complete.call_args_list[0]
     messages = first_call_args[0][0]
     user_message = next(m["content"] for m in messages if m["role"] == "user")
 
-    # The fallback prompt should still describe discovery broadly
+    # The prompt should still describe discovery broadly
     assert "down payment" in user_message.lower() or "assistance" in user_message.lower()
 
 
@@ -381,7 +381,7 @@ async def test_constitution_text_in_sector_message():
         )
     )
 
-    first_call_args = llm.complete_grounded.call_args_list[0]
+    first_call_args = llm.complete.call_args_list[0]
     messages = first_call_args[0][0]
     user_message = next(m["content"] for m in messages if m["role"] == "user")
 

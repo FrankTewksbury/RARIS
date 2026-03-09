@@ -1,5 +1,7 @@
 """Test fixtures — in-memory SQLite database for API integration tests."""
 
+import uuid
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
@@ -61,5 +63,9 @@ app.dependency_overrides[get_db] = _override_get_db
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-API-Key": f"test-{uuid.uuid4().hex}"},
+    ) as ac:
         yield ac

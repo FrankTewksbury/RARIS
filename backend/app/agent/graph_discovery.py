@@ -11,7 +11,8 @@ V6 architecture (ported from prepop1 recursive BFS pattern):
 - Safety caps: max_api_calls, max_discovery_depth, max_entities_per_sector enforce limits.
 
 Sector list is supplied at runtime from the uploaded sector JSON file.
-Falls back to DEFAULT_SECTORS (from prompts.py) if no sector file is provided.
+If no sector file is provided, the engine builds neutral runtime sectors so it
+never falls back to a domain-specific config.
 
 k_depth semantics (mapped to queue max_depth):
   k_depth=1 → L1 entity discovery only (queue max_depth=0, no expansion)
@@ -38,11 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.discovery import _extract_json, _safe_enum
 from app.agent.discovery_queue import DiscoveryQueue
-from app.agent.prompts import (
-    DEFAULT_SECTORS,
-    L0_ORCHESTRATOR_SYSTEM,
-    SECTOR_SCOPE_HEADER,
-)
+from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code
 from app.config import settings
 from app.llm.base import LLMProvider
 from app.llm.call_logger import log_heartbeat, log_stage
@@ -67,6 +64,55 @@ logger = logging.getLogger(__name__)
 
 # Placeholder token in instruction files that gets replaced with sector-specific content
 _SECTOR_PROMPT_PLACEHOLDER = "[INJECT SECTOR PROMPT HERE]"
+
+
+class EntityRegistry:
+    """In-run registry that enforces stable, canonical entity IDs across all LLM calls.
+
+    Problem: Different LLM calls for the same real-world entity independently invent IDs
+    (e.g. L1 returns 'new-jersey-doi', L2 returns 'nj-dobi'). Sources persisted under
+    the L2 ID become orphaned because the regulatory_bodies row uses the L1 ID.
+
+    Solution: The first ID seen for a (jurisdiction_code, normalized_name) pair becomes
+    the canonical ID for the entire run. All subsequent calls that return the same entity
+    have their ID rewritten to the canonical one before DB insertion or queue enqueue.
+    An alias map (any_seen_id → canonical_id) lets source regulatory_body references
+    be resolved even when the LLM returns a body reference by a non-canonical ID.
+    """
+
+    def __init__(self) -> None:
+        self._name_to_canonical: dict[str, str] = {}  # key → canonical_id
+        self._alias_to_canonical: dict[str, str] = {}  # any_seen_id → canonical_id
+
+    def _key(self, entity: dict) -> str:
+        jcode = (entity.get("jurisdiction_code") or "XX").upper()
+        name = entity.get("name", "").lower().strip()
+        return f"{jcode}:{name}"
+
+    def resolve(self, entity: dict) -> str:
+        """Return the canonical ID for entity, registering it on first sight."""
+        key = self._key(entity)
+        proposed_id = (
+            entity.get("id")
+            or re.sub(r"[^a-z0-9]+", "-", entity.get("name", "unknown").lower()).strip("-")[:40]
+        )
+        if key not in self._name_to_canonical:
+            self._name_to_canonical[key] = proposed_id
+            # Seed the alias map so the proposed ID resolves to itself
+            self._alias_to_canonical.setdefault(proposed_id, proposed_id)
+        canonical = self._name_to_canonical[key]
+        # Register any new alias (e.g. 'nj-dobi' when canonical is 'new-jersey-doi')
+        if proposed_id != canonical:
+            self._alias_to_canonical[proposed_id] = canonical
+        return canonical
+
+    def rewrite(self, entity: dict) -> dict:
+        """Return a copy of entity with id set to the canonical ID."""
+        return {**entity, "id": self.resolve(entity)}
+
+    def resolve_id(self, entity_id: str) -> str:
+        """Map any seen entity ID (including aliases) to the canonical ID."""
+        return self._alias_to_canonical.get(entity_id, entity_id)
 
 # region agent log
 _DEBUG_ENDPOINT = "http://127.0.0.1:7884/ingest/644327d9-ea5d-464a-b97e-a7bf1c844fd6"
@@ -115,12 +161,66 @@ _SEED_TO_ENTITY_TYPE: dict[str, str] = {
     "general": "state_hfa",
 }
 
-# Fallback instruction used when no instruction file is uploaded
-_FALLBACK_INSTRUCTION = (
-    "Discover all administering entities and assistance programs relevant to the assigned sector. "
-    "Use web search to find current, real entities with verified URLs. "
-    "Return structured JSON as specified in the OUTPUT FORMAT section."
-)
+def _build_runtime_sectors(geo_scope: str) -> list[dict]:
+    """Build neutral sectors when the user omits a sector file."""
+    sectors: list[dict] = [
+        {
+            "key": "federal_national",
+            "label": "Federal / National Authorities",
+            "priority": 1,
+            "search_hints": [
+                "Focus on federal or national regulators, departments, commissions, bureaus, and oversight offices.",
+            ],
+            "completeness_requirements": [],
+            "sector_prompt": "",
+            "expected_entity_types": [],
+        },
+    ]
+
+    if geo_scope in {"state", "municipal"}:
+        sectors.append(
+            {
+                "key": "state_regional",
+                "label": "State / Regional Authorities",
+                "priority": 2,
+                "search_hints": [
+                    "Focus on state departments, state agencies, commissions, divisions, and regional oversight bodies.",
+                ],
+                "completeness_requirements": [],
+                "sector_prompt": "",
+                "expected_entity_types": [],
+            }
+        )
+
+    if geo_scope == "municipal":
+        sectors.append(
+            {
+                "key": "local_municipal",
+                "label": "Municipal / County / Local Authorities",
+                "priority": 3,
+                "search_hints": [
+                    "Focus on county, city, parish, borough, and other local authorities relevant to this domain.",
+                ],
+                "completeness_requirements": [],
+                "sector_prompt": "",
+                "expected_entity_types": [],
+            }
+        )
+
+    sectors.append(
+        {
+            "key": "industry_bodies",
+            "label": "Industry / Self-Regulatory / Trade Bodies",
+            "priority": len(sectors) + 1,
+            "search_hints": [
+                "Focus on industry associations, self-regulatory bodies, accreditation groups, and standards organizations.",
+            ],
+            "completeness_requirements": [],
+            "sector_prompt": "",
+            "expected_entity_types": [],
+        }
+    )
+    return sectors
 
 
 def _build_completeness_block(sector: dict) -> str:
@@ -166,24 +266,37 @@ class DiscoveryGraph:
         sector_concurrency: int = 3,
         seed_index: dict[str, list[dict]] | None = None,
         seed_programs: list[dict] | None = None,
+        seed_anchors: list[dict] | None = None,
         constitution_text: str = "",
         instruction_text: str = "",
     ) -> AsyncGenerator[dict, None]:
         """Execute V6 RLM BFS discovery, yielding SSE events.
 
         sectors: list of sector dicts from uploaded sector file.
-                 Falls back to DEFAULT_SECTORS if empty or None.
+                 If empty or None, neutral runtime sectors are built from geo_scope.
         instruction_text: full text of the uploaded instruction file.
                           Each sector call receives this verbatim, prefixed by
                           a sector scope header. No domain content lives in code.
         """
+        if not instruction_text.strip():
+            raise ValueError("instruction_text is required for discovery runs")
+
+        runtime_sectors = sectors if sectors else _build_runtime_sectors(geo_scope)
+        if not sectors:
+            logger.warning(
+                "[graph_discovery] no sector file provided; using %d neutral runtime sectors for geo_scope=%s",
+                len(runtime_sectors),
+                geo_scope,
+            )
+
         _sectors = sorted(
-            sectors if sectors else DEFAULT_SECTORS,
+            runtime_sectors,
             key=lambda s: s.get("priority", 99),
         )
         _seed_index = seed_index or {}
         _seed_programs = seed_programs or []
-        _instruction = instruction_text.strip() or _FALLBACK_INSTRUCTION
+        _seed_anchors = seed_anchors or []
+        _instruction = instruction_text.strip()
 
         # Prepend constitution guardrails if provided
         if constitution_text.strip():
@@ -205,6 +318,9 @@ class DiscoveryGraph:
         # Initialize the discovery queue
         queue = DiscoveryQueue(max_depth=queue_max_depth)
 
+        # In-run entity ID registry — ensures consistent canonical IDs across all LLM calls
+        registry = EntityRegistry()
+
         all_entities: list[dict] = []
         all_sources: list[dict] = []
         all_programs: list[dict] = []
@@ -222,10 +338,11 @@ class DiscoveryGraph:
             max_api_calls=max_api_calls,
         ):
             if event.get("event") == "_l1_sector_result":
-                # Internal event — harvest entities and sources
+                # Internal event — harvest entities, sources, and programs
                 data = event.get("data", {})
                 sector_entities = data.get("administering_entities", [])
                 sector_sources = data.get("sources", [])
+                sector_programs = data.get("programs", [])
                 sector_key = data.get("sector_key", "")
                 for src in sector_sources:
                     src.setdefault("id", f"src-{source_id_counter:03d}")
@@ -233,9 +350,17 @@ class DiscoveryGraph:
                 all_entities.extend(sector_entities)
                 all_sources.extend(sector_sources)
 
+                # Collect L1 programs with provenance
+                for prog in sector_programs:
+                    prog.setdefault("provenance_links", {})
+                    prog["provenance_links"]["discovery_level"] = "L1"
+                    prog["provenance_links"]["discovered_from"] = f"sector:{sector_key}"
+                    all_programs.append(prog)
+
                 # Seed the queue with discovered entities for L2+ expansion
                 for entity in sector_entities:
-                    entity_id = entity.get("id", self._normalize_name(entity.get("name", ""))[:40])
+                    entity = registry.rewrite(entity)
+                    entity_id = entity["id"]
                     queue.enqueue(
                         target_type="entity",
                         target_id=entity_id,
@@ -247,24 +372,36 @@ class DiscoveryGraph:
             else:
                 yield event
 
-        # Persist L1 entities as RegulatoryBody records
+        # Persist L1 entities as RegulatoryBody records (dedup by canonical ID via registry)
+        seen_entity_ids: set[str] = set()
         for entity in all_entities:
+            eid = registry.resolve(entity)
+            if eid in seen_entity_ids:
+                continue
+            seen_entity_ids.add(eid)
             self.db.add(RegulatoryBody(
-                id=entity.get("id", f"ent-{self._normalize_name(entity.get('name', ''))[:40]}"),
+                id=eid,
                 manifest_id=self.manifest_id,
                 name=entity.get("name", "Unknown Entity"),
                 jurisdiction=_safe_enum(Jurisdiction, entity.get("jurisdiction")),
-                authority_type=_safe_enum(AuthorityType, entity.get("entity_type")),
+                jurisdiction_code=entity.get("jurisdiction_code") or None,
+                authority_type=_safe_enum(AuthorityType, entity.get("authority_type") or entity.get("entity_type")),
                 url=entity.get("url", ""),
                 governs=entity.get("governs", []),
             ))
 
+        seen_source_ids: set[str] = set()
         for src_data in all_sources:
+            sid = src_data["id"]
+            if sid in seen_source_ids:
+                logger.debug("[graph v6] skipping duplicate source %s", sid)
+                continue
+            seen_source_ids.add(sid)
             self.db.add(Source(
-                id=src_data["id"],
+                id=sid,
                 manifest_id=self.manifest_id,
                 name=src_data.get("name", "Unknown Source"),
-                regulatory_body_id=src_data.get("regulatory_body", ""),
+                regulatory_body_id=registry.resolve_id(src_data.get("regulatory_body", "")),
                 type=_safe_enum(SourceType, src_data.get("type")),
                 format=_safe_enum(SourceFormat, src_data.get("format")),
                 authority=_safe_enum(AuthorityLevel, src_data.get("authority")),
@@ -294,17 +431,80 @@ class DiscoveryGraph:
                           sector_count=len(_sectors),
                           queue_stats=queue.stats())
 
+        # Inject seed anchors that weren't already queued from L1.
+        # This guarantees all known entities enter the BFS regardless of L1 coverage.
+        for anchor in (_seed_anchors or []):
+            anchor_id = (
+                anchor.get("id")
+                or self._normalize_name(anchor.get("name", ""))[:40]
+            )
+            if not anchor_id:
+                continue
+            queue.enqueue(
+                target_type="entity",
+                target_id=anchor_id,
+                priority=1,
+                discovered_from="seed_anchor",
+                depth=1,
+                metadata=anchor,
+            )
+        anchor_count = len(_seed_anchors or [])
+        if anchor_count:
+            logger.info(
+                "[graph v6] seed anchors injected — count=%d queue_size=%d",
+                anchor_count, queue.size(),
+            )
+
+        logger.info(
+            "[graph v6] L1 done — k_depth=%d queue_empty=%s queue_size=%d entities=%d api_calls=%d queue_stats=%s",
+            k_depth, queue.is_empty(), queue.size(), len(all_entities), self._api_calls, queue.stats(),
+        )
+
         if k_depth < 2 or queue.is_empty():
             # k_depth=1 or no entities discovered — skip expansion
-            manifest.status = ManifestStatus.pending_review
+            logger.info("[graph v6] skipping L2 — k_depth=%d queue_empty=%s programs_from_l1=%d",
+                        k_depth, queue.is_empty(), len(all_programs))
+
+            # Persist L1-discovered programs
+            deduped = self._dedupe_programs(all_programs)
+            for idx, program_data in enumerate(deduped, start=1):
+                confidence = float(program_data.get("confidence", 0.0) or 0.0)
+                needs_review = bool(
+                    program_data.get("needs_human_review", False) or confidence < 0.5
+                )
+                self.db.add(Program(
+                    id=self._program_row_id(idx),
+                    manifest_id=self.manifest_id,
+                    canonical_id=self._canonical_program_id(program_data),
+                    name=program_data.get("name", "Unknown Program"),
+                    administering_entity=program_data.get("administering_entity", "Unknown"),
+                    geo_scope=_safe_enum(
+                        ProgramGeoScope, program_data.get("geo_scope"), ProgramGeoScope.state,
+                    ),
+                    jurisdiction=program_data.get("jurisdiction"),
+                    benefits=program_data.get("benefits"),
+                    eligibility=program_data.get("eligibility"),
+                    status=_safe_enum(
+                        ProgramStatus, program_data.get("status"), ProgramStatus.verification_pending,
+                    ),
+                    evidence_snippet=program_data.get("evidence_snippet"),
+                    source_urls=program_data.get("source_urls", []),
+                    provenance_links=program_data.get("provenance_links", {}),
+                    confidence=confidence,
+                    needs_human_review=needs_review,
+                ))
+
+            manifest.status = ManifestStatus.approved
+            coverage_summary = self._build_coverage_summary(_sectors, all_entities, deduped)
+            manifest.coverage_summary = coverage_summary
             await self.db.commit()
             yield self._event("complete",
                               manifest_id=self.manifest_id,
                               total_entities=len(all_entities),
-                              total_programs=0,
+                              total_programs=len(deduped),
                               api_calls=self._api_calls,
                               queue_stats=queue.stats(),
-                              coverage_summary=self._build_coverage_summary(_sectors, all_entities, []))
+                              coverage_summary=coverage_summary)
             return
 
         # ── L2+: Queue-Driven BFS Expansion ──────────────────────────────
@@ -312,6 +512,7 @@ class DiscoveryGraph:
         l2_start_time = time.monotonic()
         entity_n = 0
         entity_total = queue.size()
+        l2_seen_source_ids: set[str] = set()
 
         while not queue.is_empty():
             # Safety cap: stop if we've hit the API call limit
@@ -337,11 +538,14 @@ class DiscoveryGraph:
                               entity_n=entity_n,
                               entity_total=entity_total,
                               depth=item.depth,
-                              queue_pending=queue.size())
+                              queue_pending=queue.size(),
+                              citation_format=entity.get("citation_format_hint", ""),
+                              jurisdiction_code=entity.get("jurisdiction_code", ""),
+                              )
 
             try:
                 result = await asyncio.wait_for(
-                    self._expand_entity(entity=entity, instruction_text=_instruction),
+                    self._expand_entity(entity=entity, depth=item.depth),
                     timeout=180.0,
                 )
                 self._api_calls += 1
@@ -350,16 +554,25 @@ class DiscoveryGraph:
                 sources = result.get("sources", [])
                 sub_entities = result.get("administering_entities", [])
 
-                # Persist sources from this expansion
+                # Persist sources from this expansion.
+                # Prefix source ID with entity_id to prevent PK collisions when
+                # multiple entities return sources with the same LLM-generated ID.
                 for src in sources:
                     src.setdefault("id", f"src-{source_id_counter:03d}")
                     source_id_counter += 1
+                    raw_sid = src["id"]
+                    sid = f"{entity_id}__{raw_sid}"
+                    src["id"] = sid
+                    if sid in l2_seen_source_ids:
+                        logger.debug("[graph v6] L2 skipping duplicate source %s", sid)
+                        continue
+                    l2_seen_source_ids.add(sid)
                     all_sources.append(src)
                     self.db.add(Source(
                         id=src["id"],
                         manifest_id=self.manifest_id,
                         name=src.get("name", "Unknown Source"),
-                        regulatory_body_id=src.get("regulatory_body", ""),
+                        regulatory_body_id=registry.resolve_id(src.get("regulatory_body", "")),
                         type=_safe_enum(SourceType, src.get("type")),
                         format=_safe_enum(SourceFormat, src.get("format")),
                         authority=_safe_enum(AuthorityLevel, src.get("authority")),
@@ -384,10 +597,8 @@ class DiscoveryGraph:
                 # Enqueue sub-entities for deeper expansion (RLM recursion)
                 enqueued_children = 0
                 for sub_entity in sub_entities:
-                    sub_id = sub_entity.get(
-                        "id",
-                        self._normalize_name(sub_entity.get("name", ""))[:40],
-                    )
+                    sub_entity = registry.rewrite(sub_entity)
+                    sub_id = sub_entity["id"]
                     sub_entity.setdefault("sector_key", entity.get("sector_key", ""))
                     added = queue.enqueue(
                         target_type="entity",
@@ -406,7 +617,8 @@ class DiscoveryGraph:
                             manifest_id=self.manifest_id,
                             name=sub_entity.get("name", "Unknown Entity"),
                             jurisdiction=_safe_enum(Jurisdiction, sub_entity.get("jurisdiction")),
-                            authority_type=_safe_enum(AuthorityType, sub_entity.get("entity_type")),
+                            jurisdiction_code=sub_entity.get("jurisdiction_code") or None,
+                            authority_type=_safe_enum(AuthorityType, sub_entity.get("authority_type") or sub_entity.get("entity_type")),
                             url=sub_entity.get("url", ""),
                             governs=sub_entity.get("governs", []),
                         ))
@@ -489,8 +701,12 @@ class DiscoveryGraph:
         total_seeds = len(_seed_programs)
         seed_recovery_rate = round(total_seed_recovery / total_seeds, 3) if total_seeds else 0.0
 
-        jurisdiction_counts = Counter(s.get("jurisdiction", "") for s in all_sources)
-        type_counts = Counter(s.get("type", "") for s in all_sources)
+        jurisdiction_counts = Counter(
+            p.get("geo_scope", "unknown") for p in deduped
+        )
+        type_counts = Counter(
+            p.get("status", "unknown") for p in deduped
+        )
 
         assessment = CoverageAssessment(
             manifest_id=self.manifest_id,
@@ -502,7 +718,7 @@ class DiscoveryGraph:
         self.db.add(assessment)
 
         coverage_summary = self._build_coverage_summary(_sectors, all_entities, deduped)
-        manifest.status = ManifestStatus.pending_review
+        manifest.status = ManifestStatus.approved
         manifest.completeness_score = assessment.completeness_score
         manifest.coverage_summary = coverage_summary
         await self.db.commit()
@@ -589,12 +805,13 @@ class DiscoveryGraph:
                         },
                     )
                     # endregion
-                    logger.warning("[graph v6] sector '%s' failed: %s", sector["key"], result)
+                    error_desc = str(result) or f"{type(result).__name__} (no message)"
+                    logger.warning("[graph v6] sector '%s' failed: %s", sector["key"], error_desc)
                     yield self._event("sector_complete",
                                       sector_key=sector["key"],
                                       sector_label=sector["label"],
                                       status="failed",
-                                      error=str(result),
+                                      error=error_desc,
                                       entities_found=0)
                     # Yield empty result so aggregation loop still works
                     yield {"event": "_l1_sector_result", "data": {
@@ -614,6 +831,10 @@ class DiscoveryGraph:
                         )
                         entities = entities[:max_entities_per_sector]
 
+                    logger.info(
+                        "[graph v6] sector '%s' OK — entities=%d programs=%d sources=%d",
+                        sector["key"], len(entities), len(result.get("programs", [])), len(sources),
+                    )
                     yield self._event("sector_complete",
                                       sector_key=sector["key"],
                                       sector_label=sector["label"],
@@ -624,6 +845,7 @@ class DiscoveryGraph:
                         "sector_key": sector["key"],
                         "administering_entities": entities,
                         "sources": sources,
+                        "programs": result.get("programs", []),
                     }}
 
             # Brief pause between batches to avoid rate limit spikes
@@ -684,12 +906,12 @@ class DiscoveryGraph:
         )
 
         try:
-            text, _citations = await asyncio.wait_for(
-                self.llm.complete_grounded([
+            text = await asyncio.wait_for(
+                self.llm.complete([
                     {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
                     {"role": "user", "content": prompt},
-                ], max_tokens=16384),
-                timeout=300.0,
+                ], max_tokens=32768, response_mime_type="application/json"),
+                timeout=900.0,
             )
         except Exception as exc:
             # region agent log
@@ -750,6 +972,15 @@ class DiscoveryGraph:
                 "[graph v6] sector '%s' JSON parse produced empty result — text_len=%d tail=%r",
                 sector["key"], len(text), text[-300:] if len(text) > 300 else text,
             )
+        else:
+            logger.info(
+                "[graph v6] sector '%s' parsed — keys=%s entities=%d programs=%d text_len=%d",
+                sector["key"],
+                list(result.keys())[:10],
+                len(result.get("administering_entities", [])),
+                len(result.get("programs", [])),
+                len(text),
+            )
 
         # Tag entities with sector key for traceability
         for entity in result.get("administering_entities", []):
@@ -762,22 +993,64 @@ class DiscoveryGraph:
     async def _expand_entity(
         self,
         entity: dict,
-        instruction_text: str,
+        depth: int = 1,
     ) -> dict:
-        """Run one entity expansion call to find all programs for an entity."""
-        entity_context = (
-            f"## ENTITY EXPANSION CALL\n"
-            f"## Target entity: {entity.get('name', 'Unknown')}\n"
-            f"## Entity URL: {entity.get('url', 'unknown')}\n"
-            f"## Entity type: {entity.get('entity_type', 'unknown')}\n"
-            f"## Find ALL programs, portals, guidelines, and sub-entities for this entity only.\n"
+        """Run one entity expansion call using a node-type-aware prompt.
+
+        Priority order for the expansion question:
+        1. entity['expansion_prompt'] — generated by the LLM at L1 time, tailored
+           to this specific entity's type and jurisdiction.
+        2. build_expansion_prompt(entity) — template-based fallback keyed by
+           authority_type when no stored prompt exists.
+
+        The full L1 instruction (breadth sweep) is intentionally NOT sent here —
+        it fights the depth question and produces shallow repetitive results.
+        """
+        stored_prompt = (entity.get("expansion_prompt") or "").strip()
+        if stored_prompt:
+            expansion_question = stored_prompt
+        else:
+            expansion_question = build_expansion_prompt(entity)
+            logger.debug(
+                "[graph v6] no expansion_prompt on entity %s (%s) — using template fallback",
+                entity.get("id", "?"), entity.get("authority_type", "?"),
+            )
+
+        # Resolve jurisdiction_code and emit WARNING if L1 dropped the field
+        jcode, jcode_source = resolve_jurisdiction_code(entity)
+        if jcode_source == "name":
+            logger.warning(
+                "[graph v6] jurisdiction_code missing from L1 for '%s' — extracted '%s' from name (L1 dropped the field)",
+                entity.get("name"), jcode,
+            )
+        elif jcode_source == "fallback":
+            logger.warning(
+                "[graph v6] jurisdiction_code UNRESOLVABLE for '%s' (authority_type=%s) — generic citation format used",
+                entity.get("name"), entity.get("authority_type"),
+            )
+
+        citation_hint = (entity.get("citation_format_hint") or "").strip()
+        if not citation_hint and jcode:
+            from app.agent.prompts import JURISDICTION_CITATION_HINTS
+            citation_hint = JURISDICTION_CITATION_HINTS.get(jcode, "standard")
+        if not citation_hint:
+            citation_hint = "standard"
+
+        prompt = (
+            f"## ENTITY EXPANSION — DEPTH L{depth + 1}\n"
+            f"## Target: {entity.get('name', 'Unknown')} "
+            f"({entity.get('authority_type', 'unknown')})\n"
+            f"## URL: {entity.get('url', 'unknown')}\n"
+            f"## Jurisdiction: {jcode or entity.get('jurisdiction', 'unknown')}\n"
+            f"## Citation format: {citation_hint}\n"
             f"\n---\n\n"
+            f"{expansion_question}\n\n"
+            f"{DISCOVERY_OUTPUT_SCHEMA}"
         )
-        prompt = entity_context + instruction_text
-        text, _citations = await self.llm.complete_grounded([
+        text = await self.llm.complete([
             {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},
             {"role": "user", "content": prompt},
-        ], max_tokens=16384)
+        ], max_tokens=16384, response_mime_type="application/json")
         return _extract_json(text)
 
     # ── Utility: Coverage summary ─────────────────────────────────────────

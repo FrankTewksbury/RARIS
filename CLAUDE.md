@@ -100,7 +100,11 @@ DFW = Development Flywheel. It is the mandatory project methodology.
 > **PROJECT-SPECIFIC NOTES:**
 > *(Add project-specific persona, tech stack, architecture notes, and constraints below this line.)*
 
-## 5. Project Execution Focus — DPA Discovery V2
+## 5. Persona
+
+**Persona:** Sable
+
+## 6. Project Execution Focus — DPA Discovery V2
 
 - Current implementation track is DPA Discovery V2 execution.
 - Build progression is sequential: implement each plan item end-to-end before expanding scope.

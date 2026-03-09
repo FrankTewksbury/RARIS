@@ -17,30 +17,38 @@
       "Record 'none found' with negative evidence for any category above that is truly absent in target geography"
     ],
     "search_hints": [
-      "{STATE}/{CITY}/{COUNTY} + HOME + homebuyer assistance",
-      "CDBG + homebuyer assistance + {STATE}",
-      "USDA Rural Development + homeownership assistance + {STATE}",
-      "VA + down payment assistance grant + {STATE}"
+      "HUD HOME homebuyer assistance program",
+      "CDBG homebuyer assistance",
+      "USDA Rural Development homeownership assistance",
+      "VA down payment assistance grant",
+      "Fannie Mae HomeReady down payment",
+      "Freddie Mac Home Possible DPA"
     ]
   },
   {
     "key": "state_hfa",
-    "label": "State HFA",
+    "label": "State & Territory Housing Finance Agencies",
     "priority": 2,
     "expected_entity_types": ["state_hfa"],
-    "sector_prompt": "Focus on the STATE HOUSING FINANCE AGENCY (HFA) and any statewide housing department programs. Enumerate every active DPA product — second mortgages, forgivable grants, deferred-payment loans, bond-funded companion DPA. Include special-population products (veterans, educators, law enforcement, healthcare workers).",
+    "sector_prompt": "Discover ALL state-level Housing Finance Agencies (HFAs), state housing departments, and territory housing agencies across the ENTIRE United States. You MUST return a separate administering_entity for EVERY one of the 50 US states, the District of Columbia, and the US territories listed below. Do NOT stop after a few states.\n\nCOMPLETE LIST — return an entity for EACH:\nAL Alabama, AK Alaska, AZ Arizona, AR Arkansas, CA California, CO Colorado, CT Connecticut, DE Delaware, FL Florida, GA Georgia, HI Hawaii, ID Idaho, IL Illinois, IN Indiana, IA Iowa, KS Kansas, KY Kentucky, LA Louisiana, ME Maine, MD Maryland, MA Massachusetts, MI Michigan, MN Minnesota, MS Mississippi, MO Missouri, MT Montana, NE Nebraska, NV Nevada, NH New Hampshire, NJ New Jersey, NM New Mexico, NY New York, NC North Carolina, ND North Dakota, OH Ohio, OK Oklahoma, OR Oregon, PA Pennsylvania, RI Rhode Island, SC South Carolina, SD South Dakota, TN Tennessee, TX Texas, UT Utah, VT Vermont, VA Virginia, WA Washington, WV West Virginia, WI Wisconsin, WY Wyoming, DC District of Columbia.\n\nUS TERRITORIES: PR Puerto Rico, VI US Virgin Islands, GU Guam, AS American Samoa, MP Northern Mariana Islands.\n\nFor each entity, include the official HFA name, website URL, and list its ACTIVE DPA products (second mortgages, forgivable grants, deferred-payment loans, bond-funded companion DPA, special-population products for veterans/educators/law enforcement/healthcare workers).",
     "completeness_requirements": [
-      "State Housing Finance Agency (HFA) — all active DPA products (second mortgages, forgivable grants, deferred-payment loans)",
-      "State bond-funded first mortgage programs that bundle DPA as a companion product",
+      "ALL 50 state Housing Finance Agencies — every state MUST have at least one entity",
+      "District of Columbia housing finance entity (DCHFA)",
+      "Puerto Rico Housing Finance Authority (AFV)",
+      "US Virgin Islands Housing Finance Authority (VIHFA)",
+      "Guam Housing and Urban Renewal Authority (GHURA)",
+      "American Samoa and Northern Mariana Islands housing agencies if they exist",
+      "State housing departments or state treasury offices that operate DPA programs OUTSIDE the HFA",
       "HFA-administered special population products (veterans, educators, law enforcement, healthcare workers)",
       "HFA sub-programs administered through participating lender networks",
-      "Any statewide purchase assistance programs operated outside the HFA (state treasury, department of housing)",
-      "Record 'none found' with negative evidence for any category above that is truly absent"
+      "State bond-funded first mortgage programs that bundle DPA as a companion product",
+      "Record 'none found' with negative evidence for any state/territory where no HFA or state housing agency can be identified"
     ],
     "search_hints": [
-      "{STATE} housing finance agency + down payment assistance",
-      "{STATE} HFA + second mortgage",
-      "{STATE} HFA + forgivable grant + first-time homebuyer"
+      "list of all state housing finance agencies",
+      "NCSHA member HFA directory",
+      "state housing finance agency down payment assistance",
+      "state HFA second mortgage forgivable grant first-time homebuyer"
     ]
   },
   {
@@ -59,11 +67,11 @@
       "Record 'none found' with negative evidence for any category above that is truly absent in target geography"
     ],
     "search_hints": [
-      "{CITY}/{STATE} + live near your work + homebuyer",
-      "{CITY}/{STATE} + employer assisted housing + workforce",
-      "{CITY}/{STATE} + university + employee homeownership",
-      "{CITY}/{STATE} + hospital system + workforce homebuyer",
-      "{CITY}/{STATE} + union + down payment assistance"
+      "live near your work homebuyer program",
+      "employer assisted housing workforce",
+      "university employee homeownership assistance",
+      "hospital system workforce homebuyer",
+      "union down payment assistance"
     ]
   },
   {
@@ -83,12 +91,12 @@
       "Record 'none found' with negative evidence for any category above that is truly absent"
     ],
     "search_hints": [
-      "{CITY}/{STATE} + CDFI + down payment assistance",
-      "{CITY}/{STATE} + loan fund + homebuyer assistance",
-      "{CITY}/{STATE} + housing partnership + down payment",
-      "{CITY}/{STATE} + NeighborWorks + down payment assistance",
-      "{CITY}/{STATE} + Habitat for Humanity + homeownership",
-      "{CITY}/{STATE} + credit union + down payment assistance pool"
+      "CDFI down payment assistance",
+      "loan fund homebuyer assistance",
+      "housing partnership down payment",
+      "NeighborWorks down payment assistance",
+      "Habitat for Humanity homeownership",
+      "credit union down payment assistance pool"
     ]
   },
   {
@@ -106,10 +114,10 @@
       "Record 'none found' with negative evidence if no tribal entities operate in target geography"
     ],
     "search_hints": [
-      "{STATE} tribal housing authority + homeownership assistance",
-      "{COUNTY} tribal + down payment assistance",
-      "Section 184 + {STATE} + homebuyer",
-      "native american housing + {STATE} + purchase assistance"
+      "tribal housing authority homeownership assistance",
+      "Section 184 homebuyer",
+      "native american housing purchase assistance",
+      "NAHASDA homeownership program"
     ]
   },
   {
@@ -130,12 +138,12 @@
       "Record 'none found' with negative evidence for any category above that is truly absent"
     ],
     "search_hints": [
-      "{CITY} housing department + homebuyer assistance",
-      "{CITY} community development + down payment",
-      "{COUNTY} housing + first-time homebuyer",
-      "{CITY}/{COUNTY} PHA + homeownership assistance",
-      "{CITY} housing trust fund + down payment",
-      "{COUNTY} redevelopment authority + purchase assistance"
+      "city housing department homebuyer assistance",
+      "community development down payment",
+      "county housing first-time homebuyer",
+      "PHA homeownership assistance",
+      "housing trust fund down payment",
+      "redevelopment authority purchase assistance"
     ]
   }
 ]

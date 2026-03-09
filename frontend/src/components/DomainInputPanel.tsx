@@ -6,7 +6,26 @@ interface Props {
   isGenerating: boolean;
 }
 
-const LLM_PROVIDERS = ["openai", "anthropic", "gemini"];
+const LLM_PROVIDERS = ["anthropic", "openai", "gemini"];
+const PROVIDER_MODELS: Record<string, { value: string; label: string }[]> = {
+  anthropic: [
+    { value: "claude-opus-4-6", label: "Claude Opus 4.6 (most capable)" },
+    { value: "claude-sonnet-4-6", label: "Claude Sonnet 4.6 (balanced)" },
+    { value: "claude-haiku-4-5", label: "Claude Haiku 4.5 (fast)" },
+  ],
+  openai: [
+    { value: "gpt-5.2-pro", label: "GPT-5.2 Pro (default)" },
+    { value: "gpt-5.2", label: "GPT-5.2 (reasoning)" },
+    { value: "gpt-5.2-chat-latest", label: "GPT-5.2 Chat (fast)" },
+    { value: "gpt-5.2-codex", label: "GPT-5.2 Codex (code)" },
+    { value: "gpt-5-mini", label: "GPT-5 Mini (lightweight)" },
+  ],
+  gemini: [
+    { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+    { value: "gemini-3.1-pro-preview-customtools", label: "Gemini 3.1 Pro (agentic)" },
+    { value: "gemini-3-flash-preview", label: "Gemini 3 Flash (fast)" },
+  ],
+};
 const GEO_SCOPES = ["national", "state", "municipal"] as const;
 const ACCEPTED_FILE_TYPES = ".txt,.md,.pdf,.docx";
 const ACCEPTED_SEED_TYPES = ".json,.jsonl,.csv,.txt,.md";
@@ -16,7 +35,8 @@ const SUPPORTED_SEED_EXTENSIONS = [".json", ".jsonl", ".csv", ".txt", ".md"];
 
 export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const [domain, setDomain] = useState("");
-  const [provider, setProvider] = useState("gemini");
+  const [provider, setProvider] = useState("anthropic");
+  const [model, setModel] = useState(PROVIDER_MODELS["anthropic"][0].value);
   const [kDepth, setKDepth] = useState(2);
   const [geoScope, setGeoScope] = useState<(typeof GEO_SCOPES)[number]>("state");
   const [targetSegments, setTargetSegments] = useState("");
@@ -86,12 +106,17 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!domain.trim()) return;
+    if (!instructionFile) {
+      setError("An instruction/prompt file is required for every discovery run.");
+      return;
+    }
     setError(null);
 
     try {
       const formData = new FormData();
       formData.append("manifest_name", domain.trim());
       formData.append("llm_provider", provider);
+      formData.append("llm_model", model);
       formData.append("k_depth", String(kDepth));
       formData.append("geo_scope", geoScope);
       if (targetSegments.trim()) {
@@ -172,7 +197,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
             onClick={() => instructionInputRef.current?.click()}
             disabled={isGenerating}
           >
-            Upload Instruction / Guidance
+            Upload Instruction / Guidance (required)
           </button>
           {instructionFile && (
             <span className="upload-filename">
@@ -220,7 +245,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
             </span>
           )}
           {!sectorFile && (
-            <span className="upload-hint">optional — uses default 6-sector list if omitted</span>
+            <span className="upload-hint">optional — if omitted, the engine builds neutral runtime sectors</span>
           )}
         </div>
 
@@ -316,7 +341,11 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
             LLM Provider:
             <select
               value={provider}
-              onChange={(e) => setProvider(e.target.value)}
+              onChange={(e) => {
+                const p = e.target.value;
+                setProvider(p);
+                setModel(PROVIDER_MODELS[p]?.[0]?.value ?? "");
+              }}
               disabled={isGenerating}
             >
               {LLM_PROVIDERS.map((p) => (
@@ -324,7 +353,19 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
               ))}
             </select>
           </label>
-          <button type="submit" disabled={isGenerating || !domain.trim()}>
+          <label>
+            Model:
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              disabled={isGenerating}
+            >
+              {(PROVIDER_MODELS[provider] ?? []).map((m) => (
+                <option key={m.value} value={m.value}>{m.label}</option>
+              ))}
+            </select>
+          </label>
+          <button type="submit" disabled={isGenerating || !domain.trim() || !instructionFile}>
             {isGenerating ? "Generating..." : "Generate Manifest"}
           </button>
         </div>

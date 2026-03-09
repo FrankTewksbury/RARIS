@@ -49,7 +49,22 @@ async def test_generate_manifest_validation(client):
 
 
 @pytest.mark.asyncio
-async def test_generate_manifest_multipart_without_files(client, monkeypatch):
+async def test_generate_manifest_json_requires_instruction_text(client):
+    resp = await client.post(
+        "/api/manifests/generate",
+        json={
+            "manifest_name": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] is True
+    assert "errors" in data
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_without_instruction_file(client, monkeypatch):
     async def _noop_run_agent(*args, **kwargs):
         return None
 
@@ -62,11 +77,94 @@ async def test_generate_manifest_multipart_without_files(client, monkeypatch):
             "llm_provider": "openai",
         },
     )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] is True
+    assert "errors" in data
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_with_instruction_only(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "manifest_name": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files={
+            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+        },
+    )
     assert resp.status_code == 202
     data = resp.json()
     assert "manifest_id" in data
     assert data["status"] == "generating"
     assert "stream_url" in data
+
+
+@pytest.mark.asyncio
+async def test_list_manifests_reconciles_orphaned_generating_runs(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "manifest_name": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files={
+            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+        },
+    )
+    assert resp.status_code == 202
+    manifest_id = resp.json()["manifest_id"]
+
+    manifests_router._event_queues.pop(manifest_id, None)
+
+    resp = await client.get("/api/manifests")
+    assert resp.status_code == 200
+    manifests = resp.json()["manifests"]
+    manifest = next(item for item in manifests if item["id"] == manifest_id)
+    assert manifest["status"] == "pending_review"
+
+
+@pytest.mark.asyncio
+async def test_stream_manifest_reports_reconciled_orphaned_generation(client, monkeypatch):
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "manifest_name": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+        files={
+            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+        },
+    )
+    assert resp.status_code == 202
+    manifest_id = resp.json()["manifest_id"]
+
+    manifests_router._event_queues.pop(manifest_id, None)
+
+    resp = await client.get(f"/api/manifests/{manifest_id}/stream")
+    assert resp.status_code == 409
+    assert "reconciled" in resp.json()["detail"].lower()
+
+    resp = await client.get(f"/api/manifests/{manifest_id}")
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "pending_review"
 
 
 @pytest.mark.asyncio
@@ -113,7 +211,10 @@ async def test_generate_manifest_multipart_with_seeding_files(client, monkeypatc
             "geo_scope": "municipal",
             "k_depth": "3",
         },
-        files=files,
+        files=[
+            ("instruction_file", ("instruction.txt", b"focus on insurance regulators", "text/plain")),
+            *files,
+        ],
     )
     assert resp.status_code == 202
     data = resp.json()

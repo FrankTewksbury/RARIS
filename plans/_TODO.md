@@ -12,6 +12,7 @@ updated: 2026-03-02
 
 ## Up Next — V6 Verification & Hardening
 
+- [ ] Promote first real domain golden snapshot and validate recall/current-pointer behavior `#status/backlog #priority/important #source/session`
 - [ ] **Live test K=1**: run with `DPA_Sectors_v3.json` + `DPA_Prompt_v9.md`, verify all sectors return entities > 0 `#status/ready #priority/critical #agent/claude-code`
 - [ ] **Live test K=2**: confirm queue expansion discovers programs and sub-entities `#status/blocked-by/k1-test #priority/critical #agent/claude-code`
 - [ ] **AuthorityType migration**: Expand enum (state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal) + `native_enum=False` + DB reset `#status/ready #priority/critical #agent/cursor`
@@ -41,6 +42,8 @@ updated: 2026-03-02
 
 ## Recently Completed
 
+- [x] **Discovery input contract hardening** — prompt upload is now required, JSON callers must supply `instruction_text`, DPA-specific sector fallback removed, neutral runtime sectors added when no sector file is provided, and request-contract regression tests updated/passing `#status/done #priority/critical #agent/cursor` @completed(2026-03-08T17:20:00-05:00)
+- [x] **Golden Run Separation** — implemented DB-backed logical/golden separation with immutable snapshots, current-domain pointer, compatibility mapping, regression tests, backend rebuild, and smoke validation (313 tests passing) `#status/done #priority/critical #agent/cursor` @completed(2026-03-08T16:00:00-05:00)
 - [x] **DPA V6 RLM Queue-Driven BFS Engine** — full rewrite: discovery_queue.py, graph_discovery.py V6, call_logger.py, DPA_Prompt_v9.md, DPA_Sectors_v3.json, 3-provider LLM logging (311 tests) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-03)
 - [x] **DPA V5 BFS Engine** — committed as `752c0b4`, 6 parallel sector calls, per-entity expansion, truncation recovery (311 tests) `#status/done #priority/critical #agent/claude-code` @completed(2026-03-03)
 - [x] **DPA V4 Prompt-Driven Discovery** — full build complete (9 commits, 306 tests) `#status/done #priority/critical #agent/cursor` @completed(2026-03-02)

@@ -72,6 +72,8 @@ app.add_middleware(
 
 app.include_router(health.router)
 app.include_router(manifests.router)
+app.include_router(manifests.golden_router)
+app.include_router(manifests.golden_runs_router)
 app.include_router(acquisitions.router)
 app.include_router(ingestion.router)
 app.include_router(retrieval.router)

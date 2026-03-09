@@ -7,7 +7,7 @@ import tiktoken
 from app.config import settings
 from app.ingestion.base import ExtractedSection
 
-_enc = tiktoken.encoding_for_model("gpt-4o")
+_enc = tiktoken.get_encoding("cl100k_base")
 
 
 @dataclass

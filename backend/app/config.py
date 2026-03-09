@@ -20,8 +20,9 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = "gemini"
     openai_api_key: str = ""
+    openai_model: str = "gpt-5.2-pro"
     anthropic_api_key: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = "claude-opus-4-6"
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3.1-pro-preview"
     gemini_thinking_budget: int = 24576
@@ -59,7 +60,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Discovery safety caps
-    max_api_calls: int = 200  # Maximum LLM calls per discovery run
+    max_api_calls: int = 500  # Maximum LLM calls per discovery run
     max_discovery_depth: int = 3  # Maximum BFS depth (queue won't enqueue beyond this)
     max_entities_per_sector: int = 50  # Cap entities returned per sector call
 

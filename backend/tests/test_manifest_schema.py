@@ -14,8 +14,10 @@ def test_generate_manifest_request_valid():
     req = GenerateManifestRequest(
         manifest_name="US Insurance regulation",
         llm_provider="openai",
+        instruction_text="Focus on federal, state, and industry insurance authorities.",
     )
     assert req.manifest_name == "US Insurance regulation"
+    assert req.instruction_text is not None
 
 
 def test_generate_manifest_request_default_provider():
@@ -24,6 +26,7 @@ def test_generate_manifest_request_default_provider():
     assert req.k_depth == 2
     assert req.geo_scope == "state"
     assert req.target_segments == []
+    assert req.instruction_text is None
 
 
 def test_generate_manifest_request_geo_scope():

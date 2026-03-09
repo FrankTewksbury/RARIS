@@ -39,8 +39,12 @@ class AnthropicProvider(LLMProvider):
         )
         log_llm_call_start(record)
         try:
-            response = await self.client.messages.create(**params)
-            text = response.content[0].text
+            # Use streaming to avoid Anthropic 10-min timeout on long requests
+            chunks: list[str] = []
+            async with self.client.messages.stream(**params) as stream:
+                async for chunk in stream.text_stream:
+                    chunks.append(chunk)
+            text = "".join(chunks)
             record.finish(response_chars=len(text))
             log_llm_call_success(record)
             return text

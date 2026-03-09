@@ -8,9 +8,10 @@ from pathlib import Path
 
 import pdfplumber
 from docx import Document
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from sse_starlette.sse import EventSourceResponse
@@ -18,28 +19,72 @@ from sse_starlette.sse import EventSourceResponse
 from app.config import settings
 from app.database import async_session, get_db
 from app.llm.registry import get_provider, resolve_provider_name
-from app.models.manifest import Manifest, ManifestStatus
+from app.models.manifest import LogicalRunStatus, Manifest, ManifestStatus
 from app.schemas.manifest import (
     GenerateManifestRequest,
     GenerateManifestResponse,
+    GoldenRunDetailResponse,
+    GoldenRunListResponse,
+    GoldenRunSummaryResponse,
+    GoldenProgramListResponse,
+    GoldenProgramResponse,
+    GoldenProgramStatsResponse,
+    LogicalRunListResponse,
+    LogicalRunResponse,
     ManifestDetail,
     ManifestListResponse,
+    MergeManifestsRequest,
+    MergeManifestsResponse,
+    PromoteGoldenRunRequest,
+    PromoteGoldenRunResponse,
     ReviewRequest,
     ReviewResponse,
     SourceCreate,
     SourceResponse,
     SourceUpdate,
 )
-from app.services import manifest_service
+from app.services import ensemble_service, golden_run_service, manifest_service
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/manifests", tags=["manifests"])
+golden_router = APIRouter(prefix="/api/golden-programs", tags=["golden-programs"])
+golden_runs_router = APIRouter(prefix="/api/golden-runs", tags=["golden-runs"])
 ALLOWED_UPLOAD_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 ALLOWED_SEED_EXTENSIONS = {".json", ".jsonl", ".csv", ".txt", ".md"}
 ALLOWED_SECTOR_EXTENSIONS = {".json"}
 
 # In-memory store for SSE event queues per manifest
 _event_queues: dict[str, asyncio.Queue] = {}
+
+
+async def _reconcile_orphaned_generating_manifests(
+    db: AsyncSession,
+    *,
+    manifest_id: str | None = None,
+) -> set[str]:
+    """Mark DB rows as no longer generating when their in-memory SSE queue is gone."""
+    stmt = select(Manifest).where(Manifest.status == ManifestStatus.generating)
+    if manifest_id:
+        stmt = stmt.where(Manifest.id == manifest_id)
+
+    result = await db.execute(stmt)
+    manifests = result.scalars().all()
+    reconciled: set[str] = set()
+    for manifest in manifests:
+        if manifest.id in _event_queues:
+            continue
+        manifest.status = ManifestStatus.pending_review
+        reconciled.add(manifest.id)
+
+    if reconciled:
+        await db.commit()
+        logger.warning(
+            "[manifests] reconciled %d orphaned generating manifest(s): %s",
+            len(reconciled),
+            ", ".join(sorted(reconciled)),
+        )
+
+    return reconciled
 
 
 @router.post("/generate", status_code=202, response_model=GenerateManifestResponse)
@@ -65,6 +110,7 @@ async def generate_manifest(
     )
     db.add(manifest)
     await db.commit()
+    await golden_run_service.create_logical_run_for_manifest(db, manifest)
 
     # Set up event queue for SSE
     _event_queues[manifest_id] = asyncio.Queue()
@@ -75,6 +121,7 @@ async def generate_manifest(
         manifest_id,
         domain,
         payload.llm_provider,
+        payload.llm_model,
         payload.k_depth,
         payload.geo_scope,
         payload.target_segments,
@@ -93,11 +140,43 @@ async def generate_manifest(
     )
 
 
+@router.post("/merge", response_model=MergeManifestsResponse)
+async def merge_manifests(
+    request: MergeManifestsRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    stats = await ensemble_service.merge_manifests(db, request.manifest_ids)
+    return MergeManifestsResponse(**stats)
+
+
+@router.get("/logical-runs", response_model=LogicalRunListResponse)
+async def list_logical_runs(
+    domain: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    runs = await golden_run_service.list_logical_runs(db, domain=domain)
+    return LogicalRunListResponse(
+        runs=[
+            LogicalRunResponse(
+                run_id=run.run_id,
+                manifest_id=run.manifest_id,
+                domain=run.domain,
+                status=run.status.value,
+                created_at=run.created_at,
+                promoted_to_golden_run_id=run.promoted_to_golden_run_id,
+                notes=run.notes,
+            )
+            for run in runs
+        ]
+    )
+
+
 class _GeneratePayload:
     def __init__(
         self,
         manifest_name: str,
         llm_provider: str,
+        llm_model: str | None,
         k_depth: int,
         geo_scope: str,
         target_segments: list[str],
@@ -110,6 +189,7 @@ class _GeneratePayload:
     ) -> None:
         self.manifest_name = manifest_name
         self.llm_provider = llm_provider
+        self.llm_model = llm_model
         self.k_depth = k_depth
         self.geo_scope = geo_scope
         self.target_segments = target_segments
@@ -127,6 +207,19 @@ def _raise_missing_domain_validation() -> None:
             {
                 "type": "missing",
                 "loc": ("body", "manifest_name"),
+                "msg": "Field required",
+                "input": None,
+            }
+        ]
+    )
+
+
+def _raise_missing_instruction_validation(field_name: str = "instruction_text") -> None:
+    raise RequestValidationError(
+        [
+            {
+                "type": "missing",
+                "loc": ("body", field_name),
                 "msg": "Field required",
                 "input": None,
             }
@@ -187,7 +280,8 @@ async def _parse_sector_upload(upload: UploadFile) -> list[dict]:
     """Parse a sector config JSON file.
 
     Expected format: list of objects with at minimum ``key`` and ``label`` fields.
-    Returns empty list on any parse failure — engine uses DEFAULT_SECTORS as fallback.
+    Returns empty list on any parse failure so the engine can build neutral runtime
+    sectors instead of loading a domain-specific fallback file.
     """
     extension = Path(upload.filename or "").suffix.lower()
     if extension not in ALLOWED_SECTOR_EXTENSIONS:
@@ -201,11 +295,11 @@ async def _parse_sector_upload(upload: UploadFile) -> list[dict]:
     try:
         parsed = json.loads(content.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        logger.warning("[manifests] sector file parse error: %s — using default sectors", exc)
+        logger.warning("[manifests] sector file parse error: %s — using runtime fallback sectors", exc)
         return []
 
     if not isinstance(parsed, list):
-        logger.warning("[manifests] sector file must be a JSON array — using default sectors")
+        logger.warning("[manifests] sector file must be a JSON array — using runtime fallback sectors")
         return []
 
     sectors: list[dict] = []
@@ -227,7 +321,7 @@ async def _parse_sector_upload(upload: UploadFile) -> list[dict]:
         sectors.append(sector)
 
     if not sectors:
-        logger.warning("[manifests] sector file contained no valid entries — using default sectors")
+        logger.warning("[manifests] sector file contained no valid entries — using runtime fallback sectors")
 
     return sectors
 
@@ -409,9 +503,12 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             raise RequestValidationError(exc.errors()) from exc
         if not parsed.manifest_name.strip():
             _raise_missing_domain_validation()
+        if not (parsed.instruction_text or "").strip():
+            _raise_missing_instruction_validation()
         return _GeneratePayload(
             manifest_name=parsed.manifest_name,
             llm_provider=resolve_provider_name(parsed.llm_provider),
+            llm_model=parsed.llm_model,
             k_depth=parsed.k_depth,
             geo_scope=parsed.geo_scope,
             target_segments=parsed.target_segments,
@@ -419,6 +516,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             seed_anchors=[],
             seed_programs=[],
             seed_metrics={},
+            instruction_text=parsed.instruction_text or "",
         )
 
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
@@ -465,6 +563,9 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
         if not parsed.manifest_name.strip():
             _raise_missing_domain_validation()
 
+        raw_llm_model = form.get("llm_model")
+        llm_model = str(raw_llm_model).strip() if raw_llm_model else None
+
         constitution_upload = form.get("constitution_file")
         instruction_upload = form.get("instruction_file")
         sector_upload = form.get("sector_file")
@@ -477,10 +578,6 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
         instruction_text = ""
         if isinstance(instruction_upload, (UploadFile, StarletteUploadFile)):
             instruction_text = await _extract_upload_text(instruction_upload)
-        else:
-            logger.warning(
-                "[manifests] no instruction_file uploaded — engine will use generic fallback prompt"
-            )
 
         sectors: list[dict] = []
         if isinstance(sector_upload, (UploadFile, StarletteUploadFile)):
@@ -497,9 +594,13 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             seed_programs.extend(programs)
             file_metrics.append(metrics)
 
+        if not instruction_text.strip():
+            _raise_missing_instruction_validation("instruction_file")
+
         return _GeneratePayload(
             manifest_name=parsed.manifest_name,
             llm_provider=resolve_provider_name(parsed.llm_provider),
+            llm_model=llm_model,
             k_depth=parsed.k_depth,
             geo_scope=parsed.geo_scope,
             target_segments=parsed.target_segments,
@@ -527,6 +628,7 @@ async def _run_agent(
     manifest_id: str,
     manifest_name: str,
     llm_provider: str,
+    llm_model: str | None = None,
     k_depth: int = 2,
     geo_scope: str = "state",
     target_segments: list[str] | None = None,
@@ -542,7 +644,7 @@ async def _run_agent(
     try:
         from app.agent.graph_discovery import DiscoveryGraph
 
-        provider = get_provider(llm_provider)
+        provider = get_provider(llm_provider, model=llm_model)
         seed_index = _index_seeds_by_type(seed_programs or [])
         async with async_session() as db:
             agent = DiscoveryGraph(llm=provider, db=db, manifest_id=manifest_id)
@@ -553,6 +655,7 @@ async def _run_agent(
                 sectors=sectors or [],
                 seed_index=seed_index,
                 seed_programs=seed_programs or [],
+                seed_anchors=seed_anchors or [],
                 constitution_text=constitution_text,
                 instruction_text=instruction_text,
             ):
@@ -576,9 +679,15 @@ async def _run_agent(
 
 
 @router.get("/{manifest_id}/stream")
-async def stream_manifest_progress(manifest_id: str):
+async def stream_manifest_progress(manifest_id: str, db: AsyncSession = Depends(get_db)):
     queue = _event_queues.get(manifest_id)
     if not queue:
+        reconciled = await _reconcile_orphaned_generating_manifests(db, manifest_id=manifest_id)
+        if manifest_id in reconciled:
+            raise HTTPException(
+                status_code=409,
+                detail="Generation stream was lost, likely due to a backend restart. Manifest status was reconciled.",
+            )
         raise HTTPException(status_code=404, detail="No active generation for this manifest")
 
     async def event_generator():
@@ -598,6 +707,7 @@ async def stream_manifest_progress(manifest_id: str):
 
 @router.get("/{manifest_id}", response_model=ManifestDetail)
 async def get_manifest(manifest_id: str, db: AsyncSession = Depends(get_db)):
+    await _reconcile_orphaned_generating_manifests(db, manifest_id=manifest_id)
     result = await manifest_service.get_manifest(db, manifest_id)
     if not result:
         raise HTTPException(status_code=404, detail="Manifest not found")
@@ -606,6 +716,7 @@ async def get_manifest(manifest_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.get("", response_model=ManifestListResponse)
 async def list_manifests(db: AsyncSession = Depends(get_db)):
+    await _reconcile_orphaned_generating_manifests(db)
     manifests = await manifest_service.list_manifests(db)
     return ManifestListResponse(manifests=manifests)
 
@@ -648,6 +759,9 @@ async def approve_manifest(
         raise HTTPException(status_code=404, detail="Manifest not found")
     if "error" in result:
         raise HTTPException(status_code=409, detail=result["error"])
+    await golden_run_service.set_logical_run_status(
+        db, manifest_id, LogicalRunStatus.reviewed
+    )
     return ReviewResponse(
         manifest_id=result["manifest_id"],
         status=result["status"],
@@ -666,8 +780,170 @@ async def reject_manifest(
     )
     if not result:
         raise HTTPException(status_code=404, detail="Manifest not found")
+    await golden_run_service.set_logical_run_status(
+        db, manifest_id, LogicalRunStatus.rejected
+    )
     return ReviewResponse(
         manifest_id=result["manifest_id"],
         status=result["status"],
         rejection_notes=result.get("rejection_notes"),
     )
+
+
+def _to_golden_program_response(program) -> GoldenProgramResponse:
+    return GoldenProgramResponse(
+        id=program.id,
+        domain=getattr(program, "domain", None),
+        golden_run_id=getattr(program, "golden_run_id", None),
+        merge_key=program.merge_key,
+        canonical_id=program.canonical_id,
+        name=program.name,
+        administering_entity=program.administering_entity,
+        geo_scope=program.geo_scope.value,
+        jurisdiction=program.jurisdiction,
+        benefits=program.benefits,
+        eligibility=program.eligibility,
+        status=program.status.value,
+        last_verified=program.last_verified,
+        evidence_snippet=program.evidence_snippet,
+        source_urls=program.source_urls or [],
+        provenance_links=program.provenance_links or {},
+        confidence=program.confidence,
+        needs_human_review=program.needs_human_review,
+        source_manifest_ids=(
+            getattr(program, "source_manifest_ids", None)
+            or getattr(program, "source_run_ids", None)
+            or []
+        ),
+        found_by_count=program.found_by_count,
+        ensemble_confidence=program.ensemble_confidence,
+        merged_at=getattr(program, "merged_at", None) or getattr(program, "created_at", None),
+    )
+
+
+def _to_golden_run_summary(run, current_golden_run_id: str | None) -> GoldenRunSummaryResponse:
+    return GoldenRunSummaryResponse(
+        golden_run_id=run.id,
+        domain=run.domain,
+        version=run.version,
+        source_run_ids=run.source_run_ids or [],
+        accepted_at=run.accepted_at,
+        accepted_by=run.accepted_by,
+        notes=run.notes,
+        strategy=run.strategy,
+        item_count=run.item_count,
+        is_current=run.id == current_golden_run_id,
+    )
+
+
+@golden_runs_router.post("/promote", response_model=PromoteGoldenRunResponse)
+async def promote_golden_run(
+    request: PromoteGoldenRunRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await golden_run_service.promote_to_golden(
+            db,
+            domain=request.domain.strip(),
+            source_run_ids=request.source_run_ids,
+            accepted_by=request.accepted_by.strip() or "system",
+            notes=request.notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return PromoteGoldenRunResponse(**result)
+
+
+@golden_runs_router.get("/runs", response_model=GoldenRunListResponse)
+async def list_golden_runs(
+    domain: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    runs = await golden_run_service.list_golden_runs(db, domain=domain)
+    current_golden_run_ids: set[str] = set()
+    if domain:
+        current = await golden_run_service.get_current_golden_run(db, domain=domain)
+        if current:
+            current_golden_run_ids.add(current.id)
+    else:
+        current_golden_run_ids = await golden_run_service.list_current_golden_run_ids(db)
+    return GoldenRunListResponse(
+        runs=[
+            _to_golden_run_summary(
+                run,
+                run.id if run.id in current_golden_run_ids else None,
+            )
+            for run in runs
+        ]
+    )
+
+
+@golden_runs_router.get("/current", response_model=GoldenRunSummaryResponse)
+async def get_current_golden_run(
+    domain: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    run = await golden_run_service.get_current_golden_run(db, domain=domain)
+    if not run:
+        raise HTTPException(status_code=404, detail="No current golden run for this domain")
+    return _to_golden_run_summary(run, run.id)
+
+
+@golden_runs_router.get("/runs/{golden_run_id}", response_model=GoldenRunDetailResponse)
+async def get_golden_run(
+    golden_run_id: str,
+    db: AsyncSession = Depends(get_db),
+):
+    run = await golden_run_service.get_golden_run(db, golden_run_id=golden_run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Golden run not found")
+    return GoldenRunDetailResponse(
+        golden_run_id=run.id,
+        domain=run.domain,
+        version=run.version,
+        source_run_ids=run.source_run_ids or [],
+        accepted_at=run.accepted_at,
+        accepted_by=run.accepted_by,
+        notes=run.notes,
+        strategy=run.strategy,
+        item_count=run.item_count,
+        is_current=False,
+        programs=[_to_golden_program_response(item) for item in run.items],
+    )
+
+
+@golden_router.get("", response_model=GoldenProgramListResponse)
+async def list_golden_programs(
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=500),
+    domain: str | None = Query(default=None),
+    golden_run_id: str | None = Query(default=None),
+    geo_scope: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    rows, total = await golden_run_service.list_golden_run_items(
+        db,
+        domain=domain,
+        golden_run_id=golden_run_id,
+        offset=offset,
+        limit=limit,
+        geo_scope=geo_scope,
+    )
+    return GoldenProgramListResponse(
+        programs=[_to_golden_program_response(row) for row in rows],
+        total=total,
+    )
+
+
+@golden_router.get("/stats", response_model=GoldenProgramStatsResponse)
+async def get_golden_program_stats(
+    domain: str | None = Query(default=None),
+    golden_run_id: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    stats = await golden_run_service.golden_program_stats(
+        db,
+        domain=domain,
+        golden_run_id=golden_run_id,
+    )
+    return GoldenProgramStatsResponse(**stats)

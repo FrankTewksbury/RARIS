@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DomainInputPanel } from "../components/DomainInputPanel";
 import { AgentProgressPanel } from "../components/AgentProgressPanel";
 import { ManifestSummaryCard } from "../components/ManifestSummaryCard";
+import { ProgramsTable } from "../components/ProgramsTable";
 import { SourcesTable } from "../components/SourcesTable";
 import { CoverageSummary } from "../components/CoverageSummary";
 import { ManifestActions } from "../components/ManifestActions";
@@ -12,10 +13,10 @@ import type { Source } from "../types/manifest";
 export function Dashboard() {
   const [activeManifestId, setActiveManifestId] = useState<string | undefined>();
   const [showResults, setShowResults] = useState(false);
-  const { events, isConnected, connect } = useSSE();
+  const { events, isConnected, error, connect, reset: resetSSE } = useSSE();
 
   const { data: manifests, refetch: refetchList } = useManifestList();
-  const { data: manifest, refetch: refetchManifest } = useManifest(activeManifestId);
+  const { data: manifest, refetch: refetchManifest, isLoading: isManifestLoading } = useManifest(activeManifestId);
   const updateSource = useUpdateSource(activeManifestId || "");
   const approveManifest = useApproveManifest();
   const rejectManifest = useRejectManifest();
@@ -37,7 +38,16 @@ export function Dashboard() {
     }
   }, [isComplete, activeManifestId, refetchManifest, refetchList]);
 
+  useEffect(() => {
+    if (error && activeManifestId) {
+      refetchManifest();
+      refetchList();
+      setShowResults(true);
+    }
+  }, [error, activeManifestId, refetchManifest, refetchList]);
+
   const handleSelectManifest = (id: string) => {
+    resetSSE();
     setActiveManifestId(id);
     setShowResults(true);
   };
@@ -74,7 +84,7 @@ export function Dashboard() {
                         <span className={`badge badge-${m.status === "approved" ? "success" : m.status === "generating" ? "active" : "warning"}`}>
                           {m.status.replace("_", " ")}
                         </span>
-                        <span className="text-muted">{m.sources_count} sources</span>
+                        <span className="text-muted">{m.programs_count} programs</span>
                         {m.coverage_score > 0 && (
                           <span className="text-muted">{(m.coverage_score * 100).toFixed(0)}%</span>
                         )}
@@ -90,8 +100,8 @@ export function Dashboard() {
         {/* Main content */}
         <main className="dashboard-main">
           {/* Agent progress — show when generating */}
-          {(isConnected || events.length > 0) && (
-            <AgentProgressPanel events={events} isConnected={isConnected} />
+          {(isConnected || events.length > 0 || error) && (
+            <AgentProgressPanel events={events} isConnected={isConnected} error={error} />
           )}
 
           {/* View Results prompt after completion */}
@@ -102,10 +112,19 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* Loading state */}
+          {showResults && isManifestLoading && (
+            <div className="panel empty-state-panel">
+              <p className="text-muted">Loading manifest...</p>
+            </div>
+          )}
+
           {/* Manifest detail */}
-          {showResults && manifest && (
+          {showResults && !isManifestLoading && manifest && (
             <div className="manifest-results">
               <ManifestSummaryCard manifest={manifest} />
+
+              <ProgramsTable programs={manifest.programs} />
 
               <SourcesTable sources={manifest.sources} onUpdateSource={handleUpdateSource} />
 

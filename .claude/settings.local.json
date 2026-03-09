@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run:*)",
+      "Bash(docker compose:*)",
+      "Bash(curl:*)",
+      "Bash(xargs grep:*)",
+      "WebSearch",
+      "WebFetch(domain:developers.openai.com)",
+      "WebFetch(domain:platform.openai.com)",
+      "WebFetch(domain:www.datacamp.com)",
+      "WebFetch(domain:medium.com)",
+      "Bash(python:*)",
+      "Bash(docker exec:*)",
+      "Bash(/tmp/verify_cross_refs.sh:*)",
+      "Bash(mv:*)"
+    ]
+  }
+}

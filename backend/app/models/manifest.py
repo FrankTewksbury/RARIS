@@ -43,6 +43,8 @@ class Jurisdiction(enum.StrEnum):
     federal = "federal"
     state = "state"
     municipal = "municipal"
+    territorial = "territorial"
+    interstate = "interstate"
 
 
 class ProgramGeoScope(enum.StrEnum):
@@ -79,12 +81,25 @@ class AuthorityType(enum.StrEnum):
     cdfi = "cdfi"
     employer = "employer"
     tribal = "tribal"
+    # v3 insurance types
+    residual_market_mechanism = "residual_market_mechanism"
+    compact = "compact"
+    advisory_org = "advisory_org"
+    actuarial_body = "actuarial_body"
+    trade_association = "trade_association"
 
 
 class GapSeverity(enum.StrEnum):
     high = "high"
     medium = "medium"
     low = "low"
+
+
+class LogicalRunStatus(enum.StrEnum):
+    candidate = "candidate"
+    reviewed = "reviewed"
+    golden_promoted = "golden_promoted"
+    rejected = "rejected"
 
 
 class Manifest(Base):
@@ -118,6 +133,9 @@ class Manifest(Base):
     coverage_assessment: Mapped["CoverageAssessment | None"] = relationship(
         back_populates="manifest", cascade="all, delete-orphan", uselist=False
     )
+    logical_run: Mapped["LogicalRun | None"] = relationship(
+        back_populates="manifest", uselist=False
+    )
 
 
 class RegulatoryBody(Base):
@@ -127,7 +145,8 @@ class RegulatoryBody(Base):
     manifest_id: Mapped[str] = mapped_column(ForeignKey("manifests.id"), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     jurisdiction: Mapped[Jurisdiction] = mapped_column(Enum(Jurisdiction))
-    authority_type: Mapped[AuthorityType] = mapped_column(Enum(AuthorityType, native_enum=False))
+    jurisdiction_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    authority_type: Mapped[AuthorityType] = mapped_column(Enum(AuthorityType, native_enum=False, length=50))
     url: Mapped[str] = mapped_column(Text, nullable=False)
     governs: Mapped[list | None] = mapped_column(JSONB, default=list)
 
@@ -218,3 +237,126 @@ class Program(Base):
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
 
     manifest: Mapped["Manifest"] = relationship(back_populates="programs")
+
+
+class GoldenProgram(Base):
+    __tablename__ = "golden_programs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    merge_key: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    canonical_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    administering_entity: Mapped[str] = mapped_column(String(255), nullable=False)
+    geo_scope: Mapped[ProgramGeoScope] = mapped_column(Enum(ProgramGeoScope))
+    jurisdiction: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    benefits: Mapped[str | None] = mapped_column(Text, nullable=True)
+    eligibility: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ProgramStatus] = mapped_column(
+        Enum(ProgramStatus), default=ProgramStatus.verification_pending
+    )
+    last_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_urls: Mapped[list | None] = mapped_column(JSONB, default=list)
+    provenance_links: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_manifest_ids: Mapped[list | None] = mapped_column(JSONB, default=list)
+    found_by_count: Mapped[int] = mapped_column(Integer, default=1)
+    ensemble_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    merged_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class LogicalRun(Base):
+    __tablename__ = "logical_runs"
+
+    run_id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    manifest_id: Mapped[str] = mapped_column(
+        ForeignKey("manifests.id"), nullable=False, unique=True, index=True
+    )
+    domain: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    status: Mapped[LogicalRunStatus] = mapped_column(
+        Enum(LogicalRunStatus, native_enum=False), default=LogicalRunStatus.candidate
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    promoted_to_golden_run_id: Mapped[str | None] = mapped_column(
+        ForeignKey("golden_runs.id"), nullable=True, index=True
+    )
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    manifest: Mapped["Manifest"] = relationship(back_populates="logical_run")
+
+
+class GoldenRun(Base):
+    __tablename__ = "golden_runs"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True)
+    domain: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_run_ids: Mapped[list | None] = mapped_column(JSONB, default=list)
+    accepted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    accepted_by: Mapped[str] = mapped_column(String(100), default="system")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    strategy: Mapped[str] = mapped_column(String(50), default="pick_richest")
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    items: Mapped[list["GoldenRunItem"]] = relationship(
+        back_populates="golden_run", cascade="all, delete-orphan"
+    )
+    current_pointer: Mapped["DomainCurrentGolden | None"] = relationship(
+        back_populates="golden_run", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class GoldenRunItem(Base):
+    __tablename__ = "golden_run_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    golden_run_id: Mapped[str] = mapped_column(
+        ForeignKey("golden_runs.id"), nullable=False, index=True
+    )
+    domain: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    merge_key: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    canonical_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    administering_entity: Mapped[str] = mapped_column(String(255), nullable=False)
+    geo_scope: Mapped[ProgramGeoScope] = mapped_column(Enum(ProgramGeoScope))
+    jurisdiction: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    benefits: Mapped[str | None] = mapped_column(Text, nullable=True)
+    eligibility: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ProgramStatus] = mapped_column(
+        Enum(ProgramStatus), default=ProgramStatus.verification_pending
+    )
+    last_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_snippet: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_urls: Mapped[list | None] = mapped_column(JSONB, default=list)
+    provenance_links: Mapped[dict | None] = mapped_column(JSONB, default=dict)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
+    source_run_ids: Mapped[list | None] = mapped_column(JSONB, default=list)
+    found_by_count: Mapped[int] = mapped_column(Integer, default=1)
+    ensemble_confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    golden_run: Mapped["GoldenRun"] = relationship(back_populates="items")
+
+
+class DomainCurrentGolden(Base):
+    __tablename__ = "domain_current_golden"
+
+    domain: Mapped[str] = mapped_column(Text, primary_key=True)
+    golden_run_id: Mapped[str] = mapped_column(
+        ForeignKey("golden_runs.id"), nullable=False, unique=True, index=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    golden_run: Mapped["GoldenRun"] = relationship(back_populates="current_pointer")

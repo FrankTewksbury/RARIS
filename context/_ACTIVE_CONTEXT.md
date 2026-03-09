@@ -1,157 +1,144 @@
 # Active Context
 
-- Updated: 2026-03-03
-- Current focus: DPA V6 RLM Queue-Driven BFS Engine — **BUILD COMPLETE** (311 tests passing)
+- Updated: 2026-03-09
+- Current focus: **Insurance Domain V3** — Engine wired for jurisdiction-aware BFS; ready for full K=1 validation run
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
 
-## Phase Status
+## Current State
 
-| Phase | Name | Status | Commit |
-|-------|------|--------|--------|
-| 0 | Project Foundation | `#status/done` | `a633159` |
-| 1 | Domain Discovery & Analysis | `#status/done` | `a633159` |
-| 2 | Data Acquisition Pipeline | `#status/done` | `b73d20c` |
-| 3 | Ingestion & Curation Engine | `#status/done` | `0975e8f` |
-| 4 | Retrieval & Agent Layer | `#status/done` | `7d40fee` |
-| 5 | Vertical Expansion & Onboarding | `#status/done` | `7dd3a8f` |
-| 6 | Feedback & Continuous Curation | `#status/done` | `2f04090` |
-| 7 | Production Readiness & Integration | `#status/done` | `cdc2b85` |
-| 8 | Auth, Scheduling & Observability | `#status/done` | `2c5597a` |
-| 9 | DB Migrations, Rate Limiting & Gaps | `#status/done` | `1682179` |
-| 10 | Scraper Rate, Export, Embedding Cache, FE Resilience | `#status/done` | `21445e9` |
-| 11 | Retrieval Quality, Docker Hardening & CI | `#status/done` | `df02b34` |
+V6 RLM BFS engine is production-ready with multi-provider, multi-model support. Live testing across 6 models complete. Anthropic Claude Sonnet 4 is the clear winner for discovery yield.
 
-## DPA V3 Hierarchical Discovery — Build Complete
+### Model Comparison Results (k_depth=1)
 
-All 6 phases implemented by Claude Code agent:
+| Provider | Model | Programs Found |
+|----------|-------|---------------|
+| Anthropic | Claude Sonnet 4 | **227** |
+| OpenAI | GPT-4.1 (fast) | 146 |
+| Gemini | Gemini 3.1 Pro | 101 |
+| OpenAI | GPT-5.2 Pro (reasoning) | 89 |
+| Gemini | Gemini 3 Flash | 56 |
 
-| Step | Description | Commit | Tests |
-|------|-------------|--------|-------|
-| Prereq | Fix model IDs (gemini-3-flash-preview, gpt-5.2-pro) | `f1cf512` | 237 |
-| Phase A | `complete_grounded()` on all 3 LLM providers + Citation dataclass | `eb17f39` | 246 |
-| Phase B | `_infer_program_type()` + `_index_seeds_by_type()` seed parser | `2bc95f7` | 279 |
-| Phase C | `DiscoveryGraph` engine (L0-L3) + 4 grounded prompts | `59dfa13` | 293 |
-| Phase D | `discovery_mode` schema/routing (flat vs hierarchical) | `896fe3a` | 295 |
-| Phase E | Level-aware metrics (`cumulative_programs`, `nodes_at_level`) | `472da4d` | 298 |
+### Multi-Depth Run (Claude Sonnet 4, k_depth=3)
 
-### Key Files Added/Modified
+- **1,105 programs** discovered in single run
+- 202 entities across 6 sectors at L1
+- L2/L3 expansion yielded 5x program growth
 
-- `backend/app/llm/base.py` — `Citation` dataclass, `complete_grounded()` default
-- `backend/app/llm/gemini_provider.py` — Grounded search via `types.Tool(google_search=...)`, citation extraction from `grounding_metadata`
-- `backend/app/llm/anthropic_provider.py` — Web search via `web_search_20250305` tool, annotation parsing
-- `backend/app/llm/openai_provider.py` — Responses API web search, `url_citation` parsing
-- `backend/app/agent/graph_discovery.py` — **NEW** — L0-L3 hierarchical discovery with web grounding
-- `backend/app/agent/prompts.py` — 4 new grounded prompts (landscape mapper, source hunter, L1 expansion, L3 gap fill)
-- `backend/app/routers/manifests.py` — `_infer_program_type()`, `_index_seeds_by_type()`, `discovery_mode` routing
-- `backend/app/schemas/manifest.py` — `discovery_mode: Literal["flat", "hierarchical"]`
+### Cross-Model Ensemble (3 runs combined)
 
-### Architecture
+- **3,616 total** programs across all runs
+- **2,534 unique** programs (by name dedup)
+- ~30% overlap = cross-model validation signal
 
-```
-POST /api/manifests/generate  (discovery_mode=hierarchical)
-  → _run_agent() branches on discovery_mode
-  → DiscoveryGraph.run() yields SSE events:
-      L0: grounded landscape mapper → regulatory bodies
-      L0: grounded source hunter → verified sources with real URLs
-      L1: entity expansion by type (cdfi→nonprofit, veteran→federal, etc.)
-          + topic-matched seed injection from _index_seeds_by_type()
-      L2: program dedup by canonical ID (highest confidence wins)
-      L3: gap fill for unmatched seeds + underrepresented categories
-  → All LLM calls use complete_grounded() (web search enabled)
-  → SSE events include: discovery_level, nodes_at_level, cumulative_programs,
-    seed_match_rate_by_topic, seed_recovery_rate
-```
+## Session Changes (2026-03-04)
 
-## Test Counts
+### Engine Fixes
+- Switched discovery from `complete_grounded()` to `complete()` with `response_mime_type="application/json"` — fixed Gemini returning function_call parts instead of JSON
+- Added entity dedup (`seen_entity_ids` set) to prevent DB constraint violations
+- Added L1 program harvesting — was only collecting entities/sources, discarding programs
+- Broadened state_hfa sector to explicitly list all 50 states + DC + 5 territories
+- Bumped sector timeout 600s → 900s for reasoning models
 
-- **Backend**: 306 tests across 25 test files — all passing
-- **Frontend**: 16 tests across 8 test files — all passing
-- **Linting**: Ruff clean, TypeScript clean, ESLint clean
+### OpenAI Provider Rewrite
+- Rewired from Chat Completions API → Responses API (`client.responses.create()`)
+- `system` role mapped to `developer` for Responses API
+- `max_tokens` → `max_output_tokens`, `response_format` → `text.format`
+- Reasoning model detection — skip `temperature` for `gpt-5.2-pro`, `o1`, `o3`, `o4`
 
-## Tech Stack
+### Anthropic Provider Fix
+- `complete()` now uses streaming internally to avoid 10-min timeout on long requests
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), asyncpg |
-| Frontend | React 18, TypeScript, TanStack Query, Recharts, React Router |
-| Database | PostgreSQL 16 + pgvector (hybrid search: dense + sparse + RRF) |
-| Cache | Redis 7 (rate limiting, embedding cache) |
-| LLM | OpenAI / Anthropic / Gemini (provider registry) |
-| Embeddings | OpenAI text-embedding-3-large (3072-dim), Redis-cached |
-| Scheduler | APScheduler (change monitor, accuracy snapshots) |
-| CI | GitHub Actions (lint, format, typecheck, test, Docker build) |
-| Containers | Docker multi-stage builds, docker-compose + prod overlay |
+### Model Selection UI
+- Added `PROVIDER_MODELS` map with 2 models per provider (6 total)
+- Model dropdown auto-resets when provider changes
+- `llm_model` threaded through: schema → registry → router → provider constructor
 
-## DPA V4 Prompt-Driven Discovery — BUILD COMPLETE
+### Coverage Assessment Fix
+- Now builds from programs (geo_scope + status) instead of empty sources
+- Charts show "By Geo Scope" and "By Status"
 
-V3 hierarchical discovery had a fundamental **prompt-algorithm mismatch**: the engine used generic prompts while `DPA_Prompt_v4.md` contained rich domain methodology buried as passive context. Result: 15 programs with 0 sources.
+### Frontend Fixes
+- Added `ProgramsTable` component with filters and pagination
+- Added SSE `reset()` — clears stale progress panel when selecting sidebar manifests
+- Added loading state for manifest detail fetch
 
-**V4 architecture** (built in session S20260302_1400):
-- `domain_description` renamed to `manifest_name` (just a label)
-- Uploaded instruction prompt drives L0 discovery directly (full text, not truncated)
-- L1-L3 recursion is data-driven (from L0 output, not from original prompt)
-- Low-confidence items preserved with `needs_human_review: true` flag
-- Base instruction template created (`docs/005-doc-base-instruction-template.md`)
-- DPA_Prompt_v5 rewritten from v4 following the template
+## Session Changes (2026-03-09)
 
-**Key fix:** `MockLLM` in tests was routing L0 to the L2 verification branch because the L0 execution instructions contain "verify". Fixed by narrowing the routing condition to `"programs to verify"` (unique to the L2 prompt).
+### Insurance V3 Engine Wiring
+- Fixed `authority_type` field mapping bug — was reading `entity_type` key, now reads `authority_type` with `entity_type` fallback
+- Added 5 new `AuthorityType` enum values: `residual_market_mechanism`, `compact`, `advisory_org`, `actuarial_body`, `trade_association`
+- Widened `regulatory_bodies.authority_type` column from `VARCHAR(13)` → `VARCHAR(50)` (migration `004_widen_authority_type.py`)
+- Wired `citation_format_hint` + `jurisdiction_code` into `build_expansion_prompt()` and `_expand_entity` prompt header
+- Added 5 new `EXPANSION_TEMPLATES` for new authority types in `prompts.py`
+- Wired `seed_anchors` into BFS queue — known entities now guaranteed to enter queue at `priority=1` after L1
+- Added `citation_format` + `jurisdiction_code` to `entity_expansion_start` SSE event
+- UI entity expansion message now shows `[L2][NJ] Entity Name (1/123)` format
+- Fixed L2 source dedup — `UniqueViolationError` on `sources_pkey` hitting at entity ~123 due to shared sources (e.g. naic.org) returned by multiple entity expansions; added `l2_seen_source_ids` set
 
-**Final state:** 306 tests across 25 test files — all passing.
-
-## V5 Graph BFS Engine — BUILD COMPLETE + LIVE TESTING IN PROGRESS
-
-V5 domain-agnostic BFS engine built in session S20260302_1430:
-
-**Architecture:** 6 parallel sector calls (default, configurable via uploaded JSON) each receiving full instruction_text prefixed by a 3-line SECTOR SCOPE header. All domain expertise lives in the uploaded instruction file — zero domain content in engine code.
-
-**Key changes:**
-- `discovery_mode` (`flat`/`hierarchical`) removed entirely — always hierarchical BFS
-- `geo_target` removed — engine is domain-agnostic; geo placeholders filled by user in instruction file
-- Sector file upload slot added to UI and router (`_parse_sector_upload()`)
-- `SECTOR_SCOPE_HEADER` + `DEFAULT_SECTORS` added to `prompts.py` (domain-agnostic only)
-- `graph_discovery.py` fully rewritten: `_run_l1_sectors`, `_expand_entity`, `_run_l2_entity_expansion`
-- New SSE events: `sector_start`, `sector_complete`, `l1_assembly_complete`, `entity_expansion_start`, `entity_expansion_complete`
-- `DPA_Prompt_v7.md` (instruction file) + `DPA_Sectors_v1.json` (sector config) created
-- All tests updated to V5 event shape — 311 tests passing
-
-**Files modified:**
-- `backend/app/schemas/manifest.py` — removed `discovery_mode` + `geo_target`
-- `backend/app/routers/manifests.py` — removed discovery_mode branch, added `_parse_sector_upload()`
-- `backend/app/agent/prompts.py` — added `SECTOR_SCOPE_HEADER` + `DEFAULT_SECTORS`
-- `backend/app/agent/graph_discovery.py` — full V5 rewrite
-- `frontend/src/components/DomainInputPanel.tsx` — removed discovery_mode, added sector file upload
-- `backend/tests/test_graph_discovery.py` — rewritten for V5 event shapes
-- `backend/tests/test_graph_discovery_v4.py` — updated to V5 mock format + event names
-- `backend/tests/test_manifest_schema.py` — removed discovery_mode assertions
-- `prompts/DPA_Prompt_v7.md` — new instruction file
-- `prompts/DPA_Sectors_v1.json` — new sector config
-
-## V6 RLM Queue-Driven BFS Engine — BUILD COMPLETE
-
-V6 rewrites the static 2-level BFS (V5) into a recursive queue-driven BFS (RLM pattern):
-- `DiscoveryQueue` (priority heap + visited-set dedup) drives all L2+ expansion
-- `k_depth` maps to queue max_depth: k=1 → L1 only, k=2 → L1+L2, k=3 → L1+L2+L3
-- Safety caps: `max_api_calls=200`, `max_discovery_depth=3`, `max_entities_per_sector=50`
-- Sector prompt injection: `[INJECT SECTOR PROMPT HERE]` replaced with sector-specific content
-- LLM call logging: all 3 providers instrumented with Track A structured logging
-- `[STAGE]` and `[HEARTBEAT]` stdout lines per log-file-rule.mdc
-
-**New files:** `discovery_queue.py`, `call_logger.py`, `DPA_Prompt_v9.md`, `DPA_Sectors_v3.json`
-**Modified:** `graph_discovery.py` (full rewrite), `config.py`, `manifests.py`, all 3 LLM providers
-
-**Handoff:** `prompts/009-handoff-v6-rlm-engine-rewrite.md`
+### Validation
+- 317 backend tests passing
+- Backend container rebuilt and healthy
+- `Insurance_Prompt_v3.md` confirmed production-ready for insurance domain
 
 ## What's Next
 
-- [ ] Live test run with k_depth=1 — verify all sectors return entities > 0
-- [ ] Live test run with k_depth=2 — confirm queue expansion discovers programs
-- [ ] AuthorityType DB migration (state_hfa, municipal, pha, nonprofit, cdfi, employer, tribal)
-- [ ] Frontend: surface queue stats (depth, pending, api_calls) in AgentProgressPanel
-- [ ] Upload `DPA_Sectors_v3.json` + `DPA_Prompt_v9.md` via UI and validate end-to-end
+### Immediate
+- [ ] Full K=1 insurance run to completion — verify 0 errors
+- [ ] Confirm `authority_type` populated in DB (not null)
+- [ ] Verify citation hint appears in L2 logs for NJ DOBI
+- [ ] Update model defaults: `anthropic_model` and `gemini_model` to latest versions in `config.py`
+
+## Session Changes (2026-03-08)
+
+### Discovery Input Contract Hardening
+- `instruction_file` is now required for multipart discovery runs; JSON clients must provide `instruction_text`
+- Removed the engine's generic prompt fallback so discovery cannot silently run with stale/default guidance
+- Removed the DPA-specific default sector fallback; when `sector_file` is omitted, the engine now builds neutral runtime sectors from `geo_scope`
+- Updated the frontend discovery form to enforce required prompt upload and clarify the optional sector-file behavior
+- Validation: targeted request-contract tests passed (`49 passed`); frontend build remains blocked by a pre-existing Vite absolute-path emission error
+
+### Golden Run Separation
+- Added DB-backed logical/golden separation: `logical_runs`, `golden_runs`, `golden_run_items`, `domain_current_golden`
+- Added explicit promotion workflow with immutable snapshot recall and current-domain pointer
+- Added API surface for logical run history, golden version history, current golden lookup, and historical snapshot recall
+- Preserved existing `golden_programs` consumers through snapshot-backed compatibility mapping
+- Added regression coverage for snapshot immutability, pointer switching, and historical recall
+
+### Validation
+- Targeted golden-run tests passed: `tests/test_golden_runs.py`
+- Full backend suite passed: **313 tests**
+- Backend container rebuilt successfully and health endpoint returned OK
+- Smoke checks confirmed `GET /api/golden-runs/runs` and `GET /api/manifests/logical-runs` are live
+
+## What's Next
+
+### Phase 0: First Real Golden Promotion
+- [ ] Promote one real domain run group into the first accepted golden snapshot
+- [ ] Validate historical recall and current-pointer behavior against real manifest data
+
+### Phase 1: Ensemble Discovery Runs
+- [ ] Add Sonnet 4.6 (`claude-sonnet-4-6`) to model dropdown
+- [ ] Run Sonnet 4.6 at k_depth=3 or 4
+- [ ] Run OpenAI competing models (GPT-4.1 at higher k_depth)
+- [ ] Goal: maximize unique program count across runs
+
+### Phase 2: Master Manifest Merge
+- [ ] Build ensemble merge feature — combine all unique programs into single Master Manifest
+- [ ] Cross-model confidence scoring — programs found by multiple models get boosted
+- [ ] Dedup by normalized name + entity + geo_scope
+
+### Phase 3: Program Validation Pipeline (HARD)
+- [ ] Page data normalization — scrape and clean source URLs
+- [ ] Fuzzy matching + inference rules — test relevance to DPA
+- [ ] Program status validation — verify active/closed/paused dates
+- [ ] Property extraction — eligibility criteria, income limits, benefit amounts
+- [ ] Qualification rules — first-time buyer, income thresholds, geography
+- [ ] Link validation — verify URLs resolve, follow redirects
+- [ ] Form discovery — follow links to find application forms
+- [ ] Confidence scoring — composite score from all validation signals
 
 ### Remaining Gaps (Deferred)
-
 - RSS / Federal Register monitoring
 - Embedding provider abstraction
 - Relationship mapper batching
@@ -161,6 +148,33 @@ V6 rewrites the static 2-level BFS (V5) into a recursive queue-driven BFS (RLM p
 - Frontend code splitting and polish
 - CI improvements (mypy, Docker smoke test)
 
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `backend/app/agent/graph_discovery.py` | V6 RLM BFS discovery engine |
+| `backend/app/agent/prompts.py` | LLM system prompts |
+| `backend/app/llm/openai_provider.py` | OpenAI Responses API provider |
+| `backend/app/llm/anthropic_provider.py` | Anthropic streaming provider |
+| `backend/app/llm/gemini_provider.py` | Gemini provider with fallback chain |
+| `backend/app/llm/registry.py` | Provider factory with model passthrough |
+| `backend/app/routers/manifests.py` | API routes + background agent runner |
+| `frontend/src/components/DomainInputPanel.tsx` | Discovery form with model selection |
+| `frontend/src/components/ProgramsTable.tsx` | Programs display with filters |
+| `prompts/DPA_Prompt_v9.md` | Current instruction file |
+| `prompts/DPA_Sectors_v3.json` | 6-sector config with all 50 states |
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2.0 (async), asyncpg |
+| Frontend | React 18, TypeScript, TanStack Query, Recharts |
+| Database | PostgreSQL 16 + pgvector |
+| Cache | Redis 7 |
+| LLM | Anthropic / OpenAI / Gemini (provider registry, per-request model selection) |
+| Containers | Docker multi-stage builds, docker-compose |
+
 ## Active Branch
 
 `main`
@@ -168,3 +182,7 @@ V6 rewrites the static 2-level BFS (V5) into a recursive queue-driven BFS (RLM p
 ## Blockers
 
 None.
+
+## Tests
+
+- **Backend**: 311 tests — all passing

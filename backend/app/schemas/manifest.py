@@ -9,6 +9,8 @@ from app.config import settings
 class GenerateManifestRequest(BaseModel):
     manifest_name: str
     llm_provider: str = settings.llm_provider
+    llm_model: str | None = None
+    instruction_text: str | None = None
     k_depth: int = Field(default=2, ge=1, le=4)
     geo_scope: Literal["national", "state", "municipal"] = "state"
     target_segments: list[str] = []
@@ -125,6 +127,31 @@ class ProgramResponse(BaseModel):
     needs_human_review: bool
 
 
+class GoldenProgramResponse(BaseModel):
+    id: int
+    domain: str | None = None
+    golden_run_id: str | None = None
+    merge_key: str
+    canonical_id: str
+    name: str
+    administering_entity: str
+    geo_scope: str
+    jurisdiction: str | None = None
+    benefits: str | None = None
+    eligibility: str | None = None
+    status: str
+    last_verified: datetime | None = None
+    evidence_snippet: str | None = None
+    source_urls: list[str] = []
+    provenance_links: dict = {}
+    confidence: float
+    needs_human_review: bool
+    source_manifest_ids: list[str] = []
+    found_by_count: int
+    ensemble_confidence: float
+    merged_at: datetime | None = None
+
+
 class ManifestDetail(BaseModel):
     id: str
     domain: str
@@ -141,6 +168,85 @@ class ManifestDetail(BaseModel):
 
 class ManifestListResponse(BaseModel):
     manifests: list[ManifestSummary]
+
+
+class GoldenProgramListResponse(BaseModel):
+    programs: list[GoldenProgramResponse]
+    total: int
+
+
+class GoldenProgramStatsResponse(BaseModel):
+    total: int
+    by_geo_scope: dict[str, int] = {}
+    by_found_by_count: dict[str, int] = {}
+    average_ensemble_confidence: float = 0.0
+
+
+class LogicalRunResponse(BaseModel):
+    run_id: str
+    manifest_id: str
+    domain: str
+    status: str
+    created_at: datetime
+    promoted_to_golden_run_id: str | None = None
+    notes: str | None = None
+
+
+class LogicalRunListResponse(BaseModel):
+    runs: list[LogicalRunResponse]
+
+
+class GoldenRunSummaryResponse(BaseModel):
+    golden_run_id: str
+    domain: str
+    version: int
+    source_run_ids: list[str] = []
+    accepted_at: datetime
+    accepted_by: str
+    notes: str | None = None
+    strategy: str
+    item_count: int
+    is_current: bool = False
+
+
+class GoldenRunListResponse(BaseModel):
+    runs: list[GoldenRunSummaryResponse]
+
+
+class GoldenRunDetailResponse(GoldenRunSummaryResponse):
+    programs: list[GoldenProgramResponse] = []
+
+
+class PromoteGoldenRunRequest(BaseModel):
+    domain: str
+    source_run_ids: list[str] = Field(min_length=1)
+    accepted_by: str = "system"
+    notes: str = ""
+
+
+class PromoteGoldenRunResponse(BaseModel):
+    golden_run_id: str
+    domain: str
+    version: int
+    total_input: int
+    unique_output: int
+    duplicates_removed: int
+    new_added: int
+    updated: int
+    by_geo_scope: dict[str, int] = {}
+
+
+class MergeManifestsRequest(BaseModel):
+    manifest_ids: list[str] = Field(min_length=1)
+
+
+class MergeManifestsResponse(BaseModel):
+    total_input: int
+    unique_output: int
+    duplicates_removed: int
+    new_added: int
+    updated: int
+    by_geo_scope: dict[str, int] = {}
 
 
 class ReviewRequest(BaseModel):

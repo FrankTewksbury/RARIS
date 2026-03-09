@@ -29,6 +29,14 @@ export function ManifestSummaryCard({ manifest }: Props) {
           <span className="value">{manifest.domain}</span>
         </div>
         <div className="summary-item">
+          <span className="label">Programs</span>
+          <span className="value">{manifest.programs_count}</span>
+        </div>
+        <div className="summary-item">
+          <span className="label">Entities</span>
+          <span className="value">{manifest.domain_map?.regulatory_bodies?.length ?? 0}</span>
+        </div>
+        <div className="summary-item">
           <span className="label">Sources</span>
           <span className="value">{manifest.sources_count}</span>
         </div>

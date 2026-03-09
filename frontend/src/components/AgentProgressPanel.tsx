@@ -3,9 +3,10 @@ import type { AgentStepEvent } from "../types/manifest";
 interface Props {
   events: AgentStepEvent[];
   isConnected: boolean;
+  error?: string | null;
 }
 
-export function AgentProgressPanel({ events, isConnected }: Props) {
+export function AgentProgressPanel({ events, isConnected, error }: Props) {
   const isComplete = events.some((e) => e.step === "complete");
 
   // Sector events (V5)
@@ -55,6 +56,7 @@ export function AgentProgressPanel({ events, isConnected }: Props) {
       )}
 
       {isComplete && <p className="complete-msg">Discovery complete.</p>}
+      {error && <p className="error">{error}</p>}
 
       {/* Full event log */}
       <div className="event-log">

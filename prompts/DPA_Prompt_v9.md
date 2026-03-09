@@ -10,10 +10,10 @@ This prompt is executed as one sector-scoped call within a parallel BFS engine. 
 Prefer official domains; de-prioritize SEO pages unless used only for candidate pointers.
 
 [TARGET SCOPE] (inputs)
-- Primary: {FEDERAL}
-- Secondary: to include if referenced in [SPECIAL PROGRAMS]
-- Tertiary: {STATE}, {COUNTY}, {MUNICIPAL}
+- Geographic scope: ALL 50 US states, the District of Columbia, and US territories (Puerto Rico, US Virgin Islands, Guam, American Samoa, Northern Mariana Islands)
+- Jurisdiction levels: Federal, State, County, Municipal, Tribal
 - Buyer context: first-time homebuyer [FTHB] (assume standard definition unless source defines otherwise)
+- Output time horizon: current programs and currently published guidelines; capture paused/closed if officially listed.
 
 [SPECIAL PROGRAMS]
 - Targeted segments to explicitly prioritize:
@@ -23,7 +23,6 @@ Prefer official domains; de-prioritize SEO pages unless used only for candidate 
   - Law Enforcement
   - Firefighters / EMS
   - Healthcare workers
-- Output time horizon: current programs and currently published guidelines; capture paused/closed if officially listed.
 
 [Key Federal Agencies]
 - HUD (U.S. Department of Housing and Urban Development)
@@ -56,7 +55,7 @@ Use a prioritized queue:
 - Maintain VisitedEntities and VisitedSources.
 
 INITIALIZATION DISCOVERY
-For the provided {FEDERAL/STATE/CITY/COUNTY}, identify authoritative starting points for your assigned sector, then enqueue them:
+For your assigned sector, identify authoritative starting points across the full geographic scope, then enqueue them:
 - Locate official entity sites and identify housing/community development departments relevant to your sector
 - Enumerate all homebuyer/DPA/second mortgage/grant products; capture participating lender lists and local partner references
 - Identify program administrators (often nonprofits/CDFIs)

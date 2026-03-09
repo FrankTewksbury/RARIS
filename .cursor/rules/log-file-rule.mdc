@@ -203,9 +203,9 @@ Each pipeline stage transition MUST print a summary line to stdout using this pa
 
 Examples:
 ```
-[STAGE] source_hunter status=complete model=gemini-3-pro-preview sources=47 programs=0 skipped_batches=0
+[STAGE] source_hunter status=complete model=gemini-3.1-pro-preview sources=47 programs=0 skipped_batches=0
 [STAGE] program_enumerator status=complete model=gemini-3-flash-preview sources=47 programs=31 skipped_batches=1
-[STAGE] program_enumerator status=error model=gemini-3-pro-preview sources=47 programs=0 skipped_batches=3
+[STAGE] program_enumerator status=error model=gemini-3.1-pro-preview sources=47 programs=0 skipped_batches=3
 ```
 
 ### 10. Heartbeat Lines (Long Batch Operations)
