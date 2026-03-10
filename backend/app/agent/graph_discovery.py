@@ -39,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.discovery import _extract_json, _safe_enum
 from app.agent.discovery_queue import DiscoveryQueue
-from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code
+from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code, JURISDICTION_CITATION_HINTS
 from app.config import settings
 from app.llm.base import LLMProvider
 from app.llm.call_logger import log_heartbeat, log_prompt, log_stage
@@ -329,7 +329,7 @@ class DiscoveryGraph:
 
         # ── L1: Parallel Sector Discovery (seeds the queue) ──────────────
         l1_start_time = time.monotonic()
-        log_stage("l1_sector_discovery", status="running", model=getattr(self.llm, "model", ""))
+        log_stage("l1_sector_discovery", status="running", model=getattr(self.llm, "model", ""), manifest_id=self.manifest_id)
         async for event in self._run_l1_sectors(
             sectors=_sectors,
             instruction_text=_instruction,
@@ -424,6 +424,7 @@ class DiscoveryGraph:
             "l1_sector_discovery", status="complete",
             model=getattr(self.llm, "model", ""),
             sources=len(all_sources), programs=0,
+            manifest_id=self.manifest_id,
         )
         yield self._event("l1_assembly_complete",
                           total_entities=len(all_entities),
@@ -508,7 +509,7 @@ class DiscoveryGraph:
             return
 
         # ── L2+: Queue-Driven BFS Expansion ──────────────────────────────
-        log_stage("l2_queue_expansion", status="running", model=getattr(self.llm, "model", ""))
+        log_stage("l2_queue_expansion", status="running", model=getattr(self.llm, "model", ""), manifest_id=self.manifest_id)
         l2_start_time = time.monotonic()
         entity_n = 0
         entity_total = queue.size()
@@ -528,25 +529,26 @@ class DiscoveryGraph:
                 break
 
             entity_n += 1
-            entity = item.metadata
-            entity_id = item.target_id
-            entity_name = entity.get("name", entity_id)
+            node = item.metadata
+            node_id = item.target_id
+            node_name = node.get("name", node_id)
+            node_type = item.target_type  # "entity" | "source_title" | "source_chapter" | "source_section"
 
             yield self._event("entity_expansion_start",
-                              entity_id=entity_id,
-                              entity_name=entity_name,
+                              entity_id=node_id,
+                              entity_name=node_name,
                               entity_n=entity_n,
                               entity_total=entity_total,
                               depth=item.depth,
+                              node_type=node_type,
                               queue_pending=queue.size(),
-                              citation_format=entity.get("citation_format_hint", ""),
-                              jurisdiction_code=entity.get("jurisdiction_code", ""),
-                              expansion_prompt_preview=(entity.get("expansion_prompt") or "")[:200],
+                              citation_format=node.get("citation_format_hint", ""),
+                              jurisdiction_code=node.get("jurisdiction_code", ""),
                               )
 
             try:
                 result = await asyncio.wait_for(
-                    self._expand_entity(entity=entity, depth=item.depth),
+                    self._expand_node(node=node, node_type=node_type, depth=item.depth),
                     timeout=180.0,
                 )
                 self._api_calls += 1
@@ -556,13 +558,14 @@ class DiscoveryGraph:
                 sub_entities = result.get("administering_entities", [])
 
                 # Persist sources from this expansion.
-                # Prefix source ID with entity_id to prevent PK collisions when
-                # multiple entities return sources with the same LLM-generated ID.
+                # Prefix source ID with node_id to prevent PK collisions when
+                # multiple nodes return sources with the same LLM-generated ID.
+                enqueued_source_children = 0
                 for src in sources:
                     src.setdefault("id", f"src-{source_id_counter:03d}")
                     source_id_counter += 1
                     raw_sid = src["id"]
-                    sid = f"{entity_id}__{raw_sid}"
+                    sid = f"{node_id}__{raw_sid}"
                     src["id"] = sid
                     if sid in l2_seen_source_ids:
                         logger.debug("[graph v6] L2 skipping duplicate source %s", sid)
@@ -588,6 +591,42 @@ class DiscoveryGraph:
                         classification_tags=src.get("classification_tags", []),
                     ))
 
+                    # ALGO-012: Enqueue source nodes for deeper BFS traversal based on depth_hint.
+                    # depth_hint returned by the LLM classifies each source's depth level.
+                    # 'title' and 'chapter' nodes become queue items for further expansion.
+                    # 'section' nodes are queued only if we have depth remaining.
+                    # 'leaf' nodes are persisted only — no further expansion.
+                    depth_hint = (src.get("depth_hint") or "").strip().lower()
+                    child_node_type = {
+                        "title": "source_title",
+                        "chapter": "source_chapter",
+                        "section": "source_section",
+                    }.get(depth_hint)
+
+                    if child_node_type and item.depth + 1 <= queue.max_depth:
+                        # Build a metadata dict for the source node so the next
+                        # expansion call has name, url, citation, jurisdiction context
+                        src_meta = {
+                            "name": src.get("name", ""),
+                            "url": src.get("url", ""),
+                            "citation": src.get("citation") or src.get("name", ""),
+                            "jurisdiction_code": src.get("jurisdiction_code") or node.get("jurisdiction_code", ""),
+                            "citation_format_hint": src.get("citation_format_hint") or node.get("citation_format_hint", ""),
+                            "regulatory_body": src.get("regulatory_body", node_id),
+                            "sector_key": node.get("sector_key", ""),
+                            "depth_hint": depth_hint,
+                        }
+                        added_src = queue.enqueue(
+                            target_type=child_node_type,
+                            target_id=sid,
+                            priority=item.priority + 1,
+                            discovered_from=f"{node_type}:{node_id}",
+                            depth=item.depth + 1,
+                            metadata=src_meta,
+                        )
+                        if added_src:
+                            enqueued_source_children += 1
+
                 # Collect programs with provenance
                 for prog in programs:
                     prog.setdefault("provenance_links", {})
@@ -596,16 +635,16 @@ class DiscoveryGraph:
                     all_programs.append(prog)
 
                 # Enqueue sub-entities for deeper expansion (RLM recursion)
-                enqueued_children = 0
+                enqueued_children = enqueued_source_children
                 for sub_entity in sub_entities:
                     sub_entity = registry.rewrite(sub_entity)
                     sub_id = sub_entity["id"]
-                    sub_entity.setdefault("sector_key", entity.get("sector_key", ""))
+                    sub_entity.setdefault("sector_key", node.get("sector_key", ""))
                     added = queue.enqueue(
                         target_type="entity",
                         target_id=sub_id,
                         priority=sub_entity.get("priority", item.priority + 1),
-                        discovered_from=f"entity:{entity_id}",
+                        discovered_from=f"entity:{node_id}",
                         depth=item.depth + 1,
                         metadata=sub_entity,
                     )
@@ -628,11 +667,12 @@ class DiscoveryGraph:
                 entity_total = entity_n + queue.size()
 
                 yield self._event("entity_expansion_complete",
-                                  entity_id=entity_id,
-                                  entity_name=entity_name,
+                                  entity_id=node_id,
+                                  entity_name=node_name,
                                   entity_n=entity_n,
                                   entity_total=entity_total,
                                   depth=item.depth,
+                                  node_type=node_type,
                                   programs_found=len(programs),
                                   sources_found=len(sources),
                                   children_enqueued=enqueued_children,
@@ -646,12 +686,13 @@ class DiscoveryGraph:
                         batch=f"{entity_n}/{entity_total}",
                         items_so_far=len(all_programs),
                         elapsed_s=elapsed,
+                        manifest_id=self.manifest_id,
                     )
 
             except Exception as exc:
                 self._api_calls += 1
-                logger.warning("[graph v6] entity expansion failed for '%s': %s",
-                               entity_name, exc)
+                logger.warning("[graph v6] node expansion failed for '%s' (type=%s): %s",
+                               node_name, node_type, exc)
                 yield self._event("entity_expansion_complete",
                                   entity_id=entity_id,
                                   entity_name=entity_name,
@@ -728,6 +769,7 @@ class DiscoveryGraph:
             "l2_queue_expansion", status="complete",
             model=getattr(self.llm, "model", ""),
             sources=len(all_sources), programs=len(deduped),
+            manifest_id=self.manifest_id,
         )
         yield self._event("complete",
                           manifest_id=self.manifest_id,
@@ -989,76 +1031,75 @@ class DiscoveryGraph:
 
         return result
 
-    # ── L2+: Entity Expansion (called from queue loop) ───────────────────
+    # ── L2+: Node Expansion (entity and source nodes) ────────────────────
 
-    async def _expand_entity(
+    async def _expand_node(
         self,
-        entity: dict,
+        node: dict,
+        node_type: str = "entity",
         depth: int = 1,
     ) -> dict:
-        """Run one entity expansion call using a node-type-aware prompt.
+        """Run one node expansion call using a node-type-aware single-question prompt.
 
-        Priority order for the expansion question:
-        1. entity['expansion_prompt'] — generated by the LLM at L1 time, tailored
-           to this specific entity's type and jurisdiction.
-        2. build_expansion_prompt(entity) — template-based fallback keyed by
-           authority_type when no stored prompt exists.
+        ALGO-012: Each call asks exactly ONE bounded question scoped to the node type.
+        The framework drives traversal; the LLM returns only direct children.
+        No internal LLM recursion.
 
-        The full L1 instruction (breadth sweep) is intentionally NOT sent here —
-        it fights the depth question and produces shallow repetitive results.
+        node_type values:
+          "entity"         — L1 entity; ask for top-level titles
+          "source_title"   — statute/code title; ask for chapters within
+          "source_chapter" — chapter/part; ask for sections within
+          "source_section" — section; ask for sub-sections (leaf level)
+
+        Template is always authoritative — stored expansion_prompt from L1 is NOT used.
         """
-        stored_prompt = (entity.get("expansion_prompt") or "").strip()
-        if stored_prompt:
-            expansion_question = stored_prompt
-        else:
-            expansion_question = build_expansion_prompt(entity)
-            logger.debug(
-                "[graph v6] no expansion_prompt on entity %s (%s) — using template fallback",
-                entity.get("id", "?"), entity.get("authority_type", "?"),
-            )
+        expansion_question = build_expansion_prompt(node, node_type=node_type)
 
         # Resolve jurisdiction_code and emit WARNING if L1 dropped the field
-        jcode, jcode_source = resolve_jurisdiction_code(entity)
+        jcode, jcode_source = resolve_jurisdiction_code(node)
         if jcode_source == "name":
             logger.warning(
-                "[graph v6] jurisdiction_code missing from L1 for '%s' — extracted '%s' from name (L1 dropped the field)",
-                entity.get("name"), jcode,
+                "[graph v6] jurisdiction_code missing from L1 for '%s' — extracted '%s' from name",
+                node.get("name"), jcode,
             )
         elif jcode_source == "fallback":
             logger.warning(
-                "[graph v6] jurisdiction_code UNRESOLVABLE for '%s' (authority_type=%s) — generic citation format used",
-                entity.get("name"), entity.get("authority_type"),
+                "[graph v6] jurisdiction_code UNRESOLVABLE for '%s' (node_type=%s) — generic citation used",
+                node.get("name"), node_type,
             )
 
-        citation_hint = (entity.get("citation_format_hint") or "").strip()
+        citation_hint = (node.get("citation_format_hint") or "").strip()
         if not citation_hint and jcode:
-            from app.agent.prompts import JURISDICTION_CITATION_HINTS
             citation_hint = JURISDICTION_CITATION_HINTS.get(jcode, "standard")
         if not citation_hint:
             citation_hint = "standard"
 
+        # For source nodes, show the citation being expanded in the header
+        target_label = node.get("citation") or node.get("name", "Unknown")
+
         prompt = (
-            f"## ENTITY EXPANSION — DEPTH L{depth + 1}\n"
-            f"## Target: {entity.get('name', 'Unknown')} "
-            f"({entity.get('authority_type', 'unknown')})\n"
-            f"## URL: {entity.get('url', 'unknown')}\n"
-            f"## Jurisdiction: {jcode or entity.get('jurisdiction', 'unknown')}\n"
+            f"## NODE EXPANSION — DEPTH L{depth + 1}  [{node_type}]\n"
+            f"## Target: {node.get('name', 'Unknown')} ({node_type})\n"
+            f"## Citation: {target_label}\n"
+            f"## URL: {node.get('url', 'unknown')}\n"
+            f"## Jurisdiction: {jcode or node.get('jurisdiction', 'unknown')}\n"
             f"## Citation format: {citation_hint}\n"
             f"\n---\n\n"
             f"{expansion_question}\n\n"
             f"{DISCOVERY_OUTPUT_SCHEMA}"
         )
         log_prompt(
-            entity_id=entity.get("id", "?"),
-            entity_name=entity.get("name", "?"),
+            entity_id=node.get("id", "?"),
+            entity_name=node.get("name", "?"),
             depth=depth,
             prompt_text=prompt,
-            authority_type=entity.get("authority_type", ""),
+            authority_type=node.get("authority_type", node_type),
             jurisdiction_code=jcode or "",
+            manifest_id=self.manifest_id,
         )
         logger.info(
-            "[graph v6][expansion_prompt] entity=%s depth=%d chars=%d prompt_preview=%r",
-            entity.get("id"), depth, len(prompt), prompt[:200],
+            "[graph v6][expansion_prompt] node=%s node_type=%s depth=%d chars=%d prompt_preview=%r",
+            node.get("id") or node.get("citation", "?"), node_type, depth, len(prompt), prompt[:200],
         )
         text = await self.llm.complete([
             {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},

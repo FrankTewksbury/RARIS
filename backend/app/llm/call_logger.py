@@ -11,6 +11,7 @@ Controlled by settings.llm_logging (ON|OFF) and settings.llm_log_prompts (ON|OFF
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,23 @@ _YELLOW = "\033[93m"
 _RED = "\033[91m"
 _PURPLE = "\033[95m"
 _RESET = "\033[0m"
+
+
+def _run_tag(manifest_id: str) -> str:
+    """Extract a short run tag from manifest_id for log line prefixes.
+
+    manifest_id format: raris-manifest-{domain}-{YYYYMMDDHHMMSS}
+    Returns: RUN-YYYYMMDDHHMMSS, or RUN-UNKNOWN if not parseable.
+    """
+    if not manifest_id:
+        return "RUN-UNKNOWN"
+    # Extract trailing timestamp segment (14 digits)
+    m = re.search(r"(\d{14})$", manifest_id)
+    if m:
+        return f"RUN-{m.group(1)}"
+    # Fall back to last non-empty segment
+    parts = manifest_id.rstrip("-").rsplit("-", 1)
+    return f"RUN-{parts[-1]}" if parts else "RUN-UNKNOWN"
 
 
 @dataclass
@@ -130,12 +148,14 @@ def log_stage(
     sources: int = 0,
     programs: int = 0,
     skipped_batches: int = 0,
+    manifest_id: str = "",
 ) -> None:
     """Emit a [STAGE] summary line to stdout per log-file-rule.mdc §9."""
     if not _is_enabled():
         return
+    tag = _run_tag(manifest_id)
     print(
-        f"{_GREEN}[STAGE]{_RESET} {stage_name} "
+        f"{_GREEN}[{tag}][STAGE]{_RESET} {stage_name} "
         f"status={status} model={model} "
         f"sources={sources} programs={programs} "
         f"skipped_batches={skipped_batches}",
@@ -149,12 +169,14 @@ def log_heartbeat(
     batch: str = "",
     items_so_far: int = 0,
     elapsed_s: float = 0.0,
+    manifest_id: str = "",
 ) -> None:
     """Emit a [HEARTBEAT] line to stdout per log-file-rule.mdc §10."""
     if not _is_enabled():
         return
+    tag = _run_tag(manifest_id)
     print(
-        f"{_YELLOW}[HEARTBEAT]{_RESET} stage={stage} "
+        f"{_YELLOW}[{tag}][HEARTBEAT]{_RESET} stage={stage} "
         f"batch={batch} items_so_far={items_so_far} "
         f"elapsed_s={elapsed_s:.0f}",
         flush=True,
@@ -169,6 +191,7 @@ def log_prompt(
     prompt_text: str,
     authority_type: str = "",
     jurisdiction_code: str = "",
+    manifest_id: str = "",
 ) -> None:
     """Print the full expansion prompt to stdout when LLM_LOG_PROMPTS=ON.
 
@@ -178,11 +201,12 @@ def log_prompt(
     """
     if not _should_log_prompts():
         return
+    tag = _run_tag(manifest_id)
     header = f"EXPANSION PROMPT  L{depth + 1}  [{entity_id}]"
     bar = "=" * 44
     print(
         f"{_GREEN}{bar}\n"
-        f"     {header}\n"
+        f"     [{tag}] {header}\n"
         f"{bar}{_RESET}",
         flush=True,
     )

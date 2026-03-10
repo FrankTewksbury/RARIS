@@ -345,9 +345,55 @@ Type   : regulator  |  Jurisdiction: NJ
 | ID | Issue | Root Cause | Status |
 |----|-------|-----------|--------|
 | OI-001 | Sources duplicated 5x | ALGO-008 prefix — same logical source, 5 parent entities | Open |
-| OI-002 | Missing NJ sub-chapter statutes (17B:25, 17B:26...) | ALGO-006 dropped web grounding | Open |
-| OI-003 | Anthropic K=3 runs take 15+ hours | 47K chars × 435 entities, sequential expansion | Open |
-| OI-004 | Gemini Flash stops at Title level | Parametric only + response size cap | Open |
+| OI-002 | Missing NJ sub-chapter statutes (17B:25, 17B:26...) | ALGO-006 dropped web grounding | **ALGO-012 addresses** |
+| OI-003 | Anthropic K=3 runs take 15+ hours | 47K chars × 435 entities, sequential expansion | **ALGO-012 reduces per-call response size** |
+| OI-004 | Gemini Flash stops at Title level | Parametric only + response size cap | **ALGO-012 matches model capability to one level per call** |
+
+---
+
+### ALGO-012 — Fine-Grain BFS Recursion (Framework Owns Traversal)
+**Date:** 2026-03-10 | **Commit:** pending | **Version:** V7 #algo
+
+**What changed:**
+
+1. **EXPANSION_TEMPLATES replaced** — The single monolithic `"regulator"` template (6 depth rules, hardcoded NJ citation examples) is replaced with 13 node-type-keyed single-question templates keyed as `"node:entity:{authority_type}"` and `"node:source_title"` / `"node:source_chapter"` / `"node:source_section"`.
+
+2. **One question per call** — Each template asks exactly one bounded question: "What are the direct children of this node at this level?" The LLM returns only direct children. No internal LLM recursion.
+
+3. **Source nodes enter the BFS queue** — Sources returned from expansion are now classified by their `depth_hint` field (`title|chapter|section|leaf`) and re-enqueued as `source_title`, `source_chapter`, or `source_section` nodes. The framework traverses the citation tree level by level.
+
+4. **`_expand_entity()` renamed `_expand_node()`** — Dispatcher routes by `node_type` (entity vs source node type) not just `authority_type`. Accepts `node_type` parameter.
+
+5. **Stored `expansion_prompt` from L1 REMOVED** — The if/else "use L1 expansion_prompt if present, else fall back to template" logic is deleted. The template is always authoritative. L1 no longer writes expansion prompts (field removed from `DISCOVERY_OUTPUT_SCHEMA`).
+
+6. **`depth_hint` and `citation` fields added to schema** — `depth_hint` (required) classifies each source's depth level. `citation` (required) carries the full citation identifier. Both are used by the engine to route re-enqueuing.
+
+7. **`jurisdiction_code` added to sources schema** — Sources now carry their jurisdiction explicitly.
+
+8. **Run sequence tag on all log output** — `log_stage()`, `log_heartbeat()`, and `log_prompt()` now accept `manifest_id` and prefix every output line with `[RUN-{timestamp}]` for per-run log correlation.
+
+9. **NJ-specific examples removed from templates** — All hardcoded `N.J.A.C. 11:2-17` and `N.J.S.A. 17:22A-26` examples replaced with `{citation_hint}` placeholders and generic descriptions.
+
+10. **"Statute title" added to task sentences** — All entity templates now include "statute title, administrative code title" in the task sentence (not just in depth rules).
+
+**Rationale:**
+ALGO-007 introduced internal LLM recursion ("enumerate everything under this node exhaustively"). This produced 47K-char responses for Anthropic, caused 15+ hour runs, and still missed key sub-chapters because the LLM chose what to include. ALGO-012 restores the principle that **the framework drives traversal, the LLM answers single questions**. Each LLM call is now small, bounded, and verifiable. Depth is controlled by `k_depth` with precise semantics: k=2 → titles, k=3 → chapters, k=4 → sections.
+
+**New k_depth semantics:**
+| k | What is discovered |
+|---|-------------------|
+| 1 | Entities only (no expansion) |
+| 2 | Entities + top-level statute/code titles |
+| 3 | Entities + titles + chapters/parts/named acts |
+| 4 | Entities + titles + chapters + individual sections |
+| 5 | Full depth to sub-sections (leaf level) |
+
+**Expected outcome:** Each NJ DOBI expansion call at k=2 returns only `[N.J.S.A. Title 17, N.J.S.A. Title 17B, N.J.A.C. Title 11, ...]`. At k=3, Title 17B expands to its chapters. At k=4, each chapter expands to its sections. Complete statutory coverage without model overload.
+
+**Files changed:**
+- `backend/app/agent/prompts.py` — 13 new templates, updated schema, new `build_expansion_prompt` signature
+- `backend/app/agent/graph_discovery.py` — `_expand_node()`, source enqueue by `depth_hint`, `node_type` in SSE events
+- `backend/app/llm/call_logger.py` — `manifest_id` param on all log functions, `_run_tag()` extractor
 
 ---
 
@@ -364,6 +410,7 @@ Type   : regulator  |  Jurisdiction: NJ
 | V6 fix | DPA | Sonnet 4 | 3 | — | 1,105 prg | — | — |
 | V6.1 | Insurance | Gemini Flash | 3 | 68 | 12 unique | 10/30 (33%) | ~22 min |
 | V6.2 | Insurance | Anthropic Sonnet | 3 | 93/435 | — | — | 3.5h+ (killed) |
+| V7 ALGO-012 | Insurance | TBD | 3 | TBD | TBD | TBD (target: 80%+) | TBD (target: <30 min) |
 
 ---
 
