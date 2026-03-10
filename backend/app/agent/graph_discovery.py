@@ -42,7 +42,7 @@ from app.agent.discovery_queue import DiscoveryQueue
 from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code
 from app.config import settings
 from app.llm.base import LLMProvider
-from app.llm.call_logger import log_heartbeat, log_stage
+from app.llm.call_logger import log_heartbeat, log_prompt, log_stage
 from app.models.manifest import (
     AccessMethod,
     AuthorityLevel,
@@ -541,6 +541,7 @@ class DiscoveryGraph:
                               queue_pending=queue.size(),
                               citation_format=entity.get("citation_format_hint", ""),
                               jurisdiction_code=entity.get("jurisdiction_code", ""),
+                              expansion_prompt_preview=(entity.get("expansion_prompt") or "")[:200],
                               )
 
             try:
@@ -1046,6 +1047,18 @@ class DiscoveryGraph:
             f"\n---\n\n"
             f"{expansion_question}\n\n"
             f"{DISCOVERY_OUTPUT_SCHEMA}"
+        )
+        log_prompt(
+            entity_id=entity.get("id", "?"),
+            entity_name=entity.get("name", "?"),
+            depth=depth,
+            prompt_text=prompt,
+            authority_type=entity.get("authority_type", ""),
+            jurisdiction_code=jcode or "",
+        )
+        logger.info(
+            "[graph v6][expansion_prompt] entity=%s depth=%d chars=%d prompt_preview=%r",
+            entity.get("id"), depth, len(prompt), prompt[:200],
         )
         text = await self.llm.complete([
             {"role": "system", "content": L0_ORCHESTRATOR_SYSTEM},

@@ -159,3 +159,35 @@ def log_heartbeat(
         f"elapsed_s={elapsed_s:.0f}",
         flush=True,
     )
+
+
+def log_prompt(
+    *,
+    entity_id: str,
+    entity_name: str,
+    depth: int,
+    prompt_text: str,
+    authority_type: str = "",
+    jurisdiction_code: str = "",
+) -> None:
+    """Print the full expansion prompt to stdout when LLM_LOG_PROMPTS=ON.
+
+    Output follows print-header-style.mdc (Major header = GREEN ===, body = WHITE).
+    Gated by settings.llm_log_prompts so it is off by default and never pollutes
+    production logs unless explicitly enabled.
+    """
+    if not _should_log_prompts():
+        return
+    header = f"EXPANSION PROMPT  L{depth + 1}  [{entity_id}]"
+    bar = "=" * 44
+    print(
+        f"{_GREEN}{bar}\n"
+        f"     {header}\n"
+        f"{bar}{_RESET}",
+        flush=True,
+    )
+    print(f"{_WHITE}Entity : {entity_name}{_RESET}", flush=True)
+    print(f"{_WHITE}Type   : {authority_type}  |  Jurisdiction: {jurisdiction_code}{_RESET}", flush=True)
+    print(f"{_WHITE}{'-' * 60}{_RESET}", flush=True)
+    print(f"{_WHITE}{prompt_text}{_RESET}", flush=True)
+    print(f"{_GREEN}{bar}{_RESET}\n", flush=True)

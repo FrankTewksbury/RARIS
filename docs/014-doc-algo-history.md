@@ -294,9 +294,53 @@ to `ManifestStatus.approved`. Error path unchanged (stays `pending_review`).
 
 **Outcome:** Eliminates manual approval gate for normal runs.
 
----
+### ALGO-011 — Prompt Observability Instrumentation
+**Date:** 2026-03-10 | **Commit:** pending | **Version:** V6.2 (instrumentation)
 
-## Known Open Issues (as of 2026-03-10)
+**What changed:** `#algo`
+Added full prompt capture and display for every entity expansion call.
+This is an observability change — no algorithmic behavior is modified.
+
+**Components added:**
+
+- `log_prompt()` in `backend/app/llm/call_logger.py` — activated the previously dead
+  `_should_log_prompts()` / `settings.llm_log_prompts` flag. When `LLM_LOG_PROMPTS=ON`,
+  prints the full assembled expansion prompt to stdout using GREEN major header format
+  per `print-header-style.mdc` + `log-file-rule.mdc §2`.
+
+- `logger.info("[graph v6][expansion_prompt] ...")` in `_expand_entity()` — always logs
+  entity ID, depth, prompt char count, and first 200 chars of prompt at INFO level
+  regardless of `LLM_LOG_PROMPTS` setting (goes to `docker compose logs backend`).
+
+- `expansion_prompt_preview` field added to `entity_expansion_start` SSE event — carries
+  the first 200 chars of the entity's stored `expansion_prompt` (L1-generated), giving
+  the frontend real-time visibility into what question is about to be asked.
+
+- `.env.example` updated: `LLM_LOG_PROMPTS=OFF` documented with instructions.
+
+**Cursor terminal color fix:**
+Pinned ANSI hex values in `C:\Users\frank\AppData\Roaming\Cursor\User\profiles\-650467ac\settings.json`
+via `workbench.colorCustomizations` to match the `log-file-rule.mdc §2` color scheme:
+GREEN=`#00FF90`, WHITE=`#F0F0F0`, YELLOW=`#FFD700`, RED=`#FF4444`, PURPLE/MAGENTA=`#CC88FF`.
+
+**How to use:**
+Set `LLM_LOG_PROMPTS=ON` in `.env`, rebuild containers, run any discovery run.
+Every entity expansion will print:
+```
+============================================
+     EXPANSION PROMPT  L2  [nj-dobi]
+============================================
+Entity : New Jersey Department of Banking and Insurance
+Type   : regulator  |  Jurisdiction: NJ
+------------------------------------------------------------
+## ENTITY EXPANSION — DEPTH L2
+...full prompt text...
+============================================
+```
+
+**Outcome:** Zero behavioral change. Full prompt visibility for analysis and debugging.
+
+---
 
 | ID | Issue | Root Cause | Status |
 |----|-------|-----------|--------|
