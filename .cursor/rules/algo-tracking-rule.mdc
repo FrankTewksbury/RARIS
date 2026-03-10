@@ -1,0 +1,75 @@
+# Algorithm Change Tracking Rule — #algo
+
+## Purpose
+
+The RARIS project contains a novel Recursive Language Model (RLM) discovery algorithm
+that is under active optimization and has patent-track significance. Every change to
+the discovery algorithm MUST be tracked, tagged, and persisted.
+
+## Scope
+
+This rule applies to any change affecting:
+- `backend/app/agent/graph_discovery.py` — core BFS/RLM engine
+- `backend/app/agent/prompts.py` — expansion prompts, schemas, templates
+- `backend/app/agent/discovery_queue.py` — queue mechanics
+- `backend/app/llm/` — provider switching, grounding, JSON mode
+- Any prompt file that drives discovery depth or entity enumeration
+
+## RULE: Tag All Algorithm Changes #algo
+
+When making any change to the files above, you MUST:
+
+1. **Add `#algo` to the commit message** — e.g., `fix(discovery): restore grounded expansion for L2+ #algo`
+2. **Add an entry to `docs/014-doc-algo-history.md`** — chronological, using the ALGO-NNN format
+3. **Sync the entry to Obsidian** at `C:\DATA\DFW\Vault\projects\raris\algo-history.md`
+4. **Record the outcome** — programs found, sources found, NJ baseline coverage, runtime
+
+## RULE: ALGO-NNN Entry Format
+
+Every entry in `docs/014-doc-algo-history.md` MUST include:
+
+```markdown
+### ALGO-NNN — Short Description
+**Date:** YYYY-MM-DD | **Commit:** `<hash>` | **Version:** VX.Y
+
+**What changed:** #algo
+<description of the change>
+
+**Before / After:** (code snippet or explanation)
+
+**Outcome:**
+- Programs/sources found
+- NJ baseline coverage (if measured)
+- Runtime
+- Any regressions introduced
+```
+
+## RULE: Never Change Algorithm Without Recording It
+
+- MUST NOT modify the discovery engine, prompts, or LLM provider calls without
+  adding an ALGO entry BEFORE or IMMEDIATELY AFTER the change.
+- If the change is exploratory/experimental, prefix with `EXP-NNN` in the entry.
+- If the change causes a regression, document it immediately — regressions are
+  as important as improvements for patent and optimization history.
+
+## RULE: Sync to Obsidian
+
+After every ALGO entry added to `docs/014-doc-algo-history.md`, sync the same
+entry to `C:\DATA\DFW\Vault\projects\raris\algo-history.md`.
+Both files must stay in sync. The RARIS `docs/` file is the primary;
+the Obsidian file is the cross-tool reference.
+
+## Canonical Files
+
+| File | Purpose |
+|------|---------|
+| `x:\RARIS\docs\014-doc-algo-history.md` | Primary algo history — full detail |
+| `C:\DATA\DFW\Vault\projects\raris\algo-history.md` | Obsidian sync — cross-tool reference |
+
+## Success Metrics Table
+
+The algo history file MUST maintain an up-to-date success metrics table:
+
+| Version | Domain | Model | K | Programs/Sources | NJ Coverage | Runtime |
+
+Update this table after every run that produces measurable output.
