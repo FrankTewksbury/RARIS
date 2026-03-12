@@ -76,6 +76,7 @@ When in doubt, ask: *Does this entity directly produce a binding statute, regula
 - Capture `citation_format_hint` for every state/territorial regulator — this is the statutory citation pattern used in that jurisdiction (e.g., "N.J.S.A." for New Jersey, "Tex. Ins. Code" for Texas, "Cal. Ins. Code" for California). Do not leave blank for state/territorial regulators.
 - For residual market mechanisms and state programs, set `authority_type` to `residual_market_mechanism` and populate `mechanism_type`.
 - Keep distinct entities distinct. Do not merge a FAIR Plan into its state DOI entry.
+- For every entry in `sources[]`, set `depth_hint` to classify the document level: `'title'` for top-level statute titles or administrative code titles (e.g., "N.J.S.A. Title 17", "N.J.A.C. Title 11"); `'chapter'` for named chapters, parts, or sub-acts within a title; `'section'` for individual sections; `'leaf'` for bulletins indexes, circular collections, enforcement order indexes, or any source with no further hierarchical children.
 
 ## DISCOVERY EXPECTATIONS
 
@@ -119,6 +120,7 @@ No prose. No markdown fences. No trailing commas.
       "jurisdiction_code": "NJ|CA|PR|...",
       "url": "https://...",
       "access_method": "scrape|download|api|manual",
+      "depth_hint": "title|chapter|section|leaf",
       "confidence": 0.0,
       "needs_human_review": false
     }

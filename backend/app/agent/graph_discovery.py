@@ -41,7 +41,7 @@ from app.database import async_session as _async_session_factory
 
 from app.agent.discovery import _extract_json, _safe_enum
 from app.agent.discovery_queue import DiscoveryQueue
-from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code, JURISDICTION_CITATION_HINTS
+from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, build_sibling_context, resolve_jurisdiction_code, JURISDICTION_CITATION_HINTS, DOMAIN_CHAPTER_HINTS, _derive_domain_key
 from app.config import settings
 from app.llm.base import LLMProvider
 from app.llm.call_logger import log_heartbeat, log_prompt, log_stage
@@ -627,9 +627,11 @@ class DiscoveryGraph:
                         # Build a metadata dict for the source node so the next
                         # expansion call has name, url, citation, jurisdiction context
                         src_meta = {
+                            "id": sid,
                             "name": src.get("name", ""),
                             "url": src.get("url", ""),
                             "citation": src.get("citation") or src.get("name", ""),
+                            "type": src.get("type", ""),
                             "jurisdiction_code": src.get("jurisdiction_code") or node.get("jurisdiction_code", ""),
                             "citation_format_hint": src.get("citation_format_hint") or node.get("citation_format_hint", ""),
                             "regulatory_body": src.get("regulatory_body", node_id),
@@ -1017,11 +1019,11 @@ class DiscoveryGraph:
         manifest = await self.db.get(Manifest, self.manifest_id)
 
         if deduped:
-            # Determine next program row offset to avoid PK collision
+            # Count existing programs for this manifest to avoid PK collision
             from sqlalchemy import func as _func
             count_result = await self.db.execute(
-                _select(_func.count()).select_from(
-                    __import__("sqlalchemy", fromlist=["Table"]).table("programs").c.id
+                _select(_func.count()).select_from(Program).where(
+                    Program.manifest_id == self.manifest_id
                 )
             )
             existing_count = 0
@@ -1385,7 +1387,41 @@ class DiscoveryGraph:
 
         Template is always authoritative — stored expansion_prompt from L1 is NOT used.
         """
-        expansion_question = build_expansion_prompt(node, node_type=node_type)
+        # ALGO-014: For source nodes, query already-found children and inject
+        # sibling context so the LLM fills gaps rather than repeating known entries.
+        sibling_context = ""
+        if node_type in ("source_title", "source_chapter"):
+            node_id = node.get("id", "")
+            if node_id:
+                from sqlalchemy import select as _select
+                # Direct children only: one __ separator beyond the parent prefix
+                _child_prefix = f"{node_id}__"
+                _grandchild_pattern = f"{node_id}%__%__%"
+                try:
+                    _existing = await self.db.execute(
+                        _select(Source.citation).where(
+                            Source.manifest_id == self.manifest_id,
+                            Source.id.like(_child_prefix + "%"),
+                            Source.id.not_like(_grandchild_pattern),
+                        )
+                    )
+                    already_found = [r[0] for r in _existing.fetchall() if r[0]]
+                except Exception as _sib_exc:
+                    logger.debug("[graph v6][algo-014] sibling query failed for %s: %s", node_id, _sib_exc)
+                    already_found = []
+
+                # Domain hints from sector_key + source type
+                domain_key = _derive_domain_key(node.get("sector_key", ""))
+                src_type = node.get("type", "")
+                hints = DOMAIN_CHAPTER_HINTS.get((domain_key, src_type), [])
+                sibling_context = build_sibling_context(already_found, hints)
+                if sibling_context:
+                    logger.debug(
+                        "[graph v6][algo-014] injecting sibling context for %s: found=%d hints=%d",
+                        node_id, len(already_found), len(hints),
+                    )
+
+        expansion_question = build_expansion_prompt(node, node_type=node_type, sibling_context=sibling_context)
 
         # Resolve jurisdiction_code and emit WARNING if L1 dropped the field
         jcode, jcode_source = resolve_jurisdiction_code(node)

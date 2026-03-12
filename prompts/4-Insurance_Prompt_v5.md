@@ -111,6 +111,7 @@ When in doubt, ask: *Is this entity a licensed regulatory body, a state-authoriz
 - If an entity's URL is uncertain, set `confidence` below 0.85 and `needs_human_review: true`. Do not omit the entity.
 - Populate `citation_format_hint` for specialty federal programs where a specific USC citation applies.
 - Leave `citation_format_hint` blank for stamping offices, captive programs, and international bodies.
+- For every entry in `sources[]`, set `depth_hint` to classify the document level: `'title'` for top-level statute titles or administrative code titles; `'chapter'` for named chapters, parts, or sub-acts within a title; `'section'` for individual sections; `'leaf'` for bulletins indexes, guidance collections, or any source with no further hierarchical children.
 
 ## DISCOVERY EXPECTATIONS
 
@@ -152,6 +153,7 @@ No prose. No markdown fences. No trailing commas.
       "jurisdiction_code": "US|NJ|CA|...",
       "url": "https://...",
       "access_method": "scrape|download|api|manual",
+      "depth_hint": "title|chapter|section|leaf",
       "confidence": 0.0,
       "needs_human_review": false
     }

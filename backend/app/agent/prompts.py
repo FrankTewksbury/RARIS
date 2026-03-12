@@ -835,7 +835,88 @@ def resolve_jurisdiction_code(entity: dict) -> tuple[str, str]:
     return "", "fallback"
 
 
-def build_expansion_prompt(node: dict, node_type: str = "entity") -> str:
+# ---------------------------------------------------------------------------
+# ALGO-014: Domain chapter hints for dynamic sibling context injection.
+# Keyed by (domain_key, source_type). Values are functional descriptions only —
+# no hardcoded citation numbers. domain_key is derived from sector_key at runtime.
+# ---------------------------------------------------------------------------
+
+DOMAIN_CHAPTER_HINTS: dict[tuple[str, str], list[str]] = {
+    ("insurance", "regulation"): [
+        "claims handling and unfair claims settlement practices",
+        "producer/agent licensing and appointments",
+        "producer standards of conduct and fiduciary duties",
+        "surplus lines and non-admitted insurers",
+        "market conduct examinations",
+        "rate and form filings",
+        "life and health insurance policy standards",
+        "automobile insurance requirements",
+        "property insurance requirements",
+    ],
+    ("insurance", "statute"): [
+        "holding company systems and insurer organization",
+        "insurer rehabilitation and liquidation",
+        "unfair trade practices and discrimination",
+        "producer licensing and appointment requirements",
+        "insurance fraud prevention",
+        "individual and group health insurance standards",
+        "life insurance policy standards",
+        "investment standards for insurers",
+        "reinsurance requirements",
+    ],
+}
+
+
+def _derive_domain_key(sector_key: str) -> str:
+    """Extract a normalized domain key from a sector_key string.
+
+    sector_key values look like 'insurance_federal', 'insurance_state_nj',
+    'dpa_state', etc. Returns the first segment before '_'.
+    """
+    return (sector_key or "").split("_")[0].lower()
+
+
+def build_sibling_context(
+    already_found: list[str],
+    domain_hints: list[str],
+) -> str:
+    """Return a dynamic context block to inject into a source node expansion prompt.
+
+    ALGO-014: Provides the LLM with two signals:
+    1. What children have already been found (avoid duplicates).
+    2. What functional categories are expected in this domain (fill gaps).
+
+    Args:
+        already_found: Citation strings for children already in the DB.
+        domain_hints:  Functional chapter descriptions from DOMAIN_CHAPTER_HINTS.
+
+    Returns empty string when both inputs are empty (no context to inject).
+    """
+    if not already_found and not domain_hints:
+        return ""
+
+    lines: list[str] = []
+
+    if already_found:
+        found_str = ", ".join(already_found[:20])  # cap to avoid token bloat
+        lines.append(f"CONTEXT — Already found under this parent: {found_str}")
+        lines.append("Do NOT re-return any of the above — return only entries not yet listed.")
+
+    if domain_hints:
+        hints_str = "; ".join(domain_hints)
+        lines.append(
+            f"Completeness check — ensure you have captured chapters governing: {hints_str}. "
+            "If any are absent from the already-found list above, include them now."
+        )
+
+    return "\n".join(lines)
+
+
+def build_expansion_prompt(
+    node: dict,
+    node_type: str = "entity",
+    sibling_context: str = "",
+) -> str:
     """Return a single-question expansion prompt for the given node.
 
     ALGO-012: Template is always authoritative. The stored LLM expansion_prompt
@@ -864,13 +945,16 @@ def build_expansion_prompt(node: dict, node_type: str = "entity") -> str:
         template_key = f"node:{node_type}"
         template = EXPANSION_TEMPLATES.get(template_key, _EXPANSION_TEMPLATE_DEFAULT)
         parent_citation = node.get("citation") or node.get("name", "this citation")
-        return template.format(
+        result = template.format(
             name=node.get("name", "Unknown Source"),
             url=node.get("url", "unknown URL"),
             parent_citation=parent_citation,
             citation_hint=node.get("citation_format_hint", ""),
             jurisdiction_code=node.get("jurisdiction_code", ""),
         )
+        if sibling_context:
+            result += f"\n\n{sibling_context}"
+        return result
 
     # Entity nodes: try specific key first, then generic entity fallback
     authority_type = (node.get("authority_type") or "other").lower()

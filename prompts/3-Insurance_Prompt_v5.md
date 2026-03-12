@@ -89,6 +89,7 @@ When in doubt, ask: *Does this entity produce a model law that states adopt, fil
 - If an entity's URL is uncertain, set `confidence` below 0.85 and `needs_human_review: true`. Do not omit the entity.
 - For all systemic risk oversight entities, set `confidence` ≤ 0.80 and `needs_human_review: true`.
 - Leave `citation_format_hint` blank for advisory organizations. Populate it for specialized federal programs (e.g., "7 U.S.C.", "29 U.S.C.", "38 U.S.C.", "42 U.S.C.").
+- For every entry in `sources[]`, set `depth_hint` to classify the document level: `'title'` for top-level statute titles or administrative code titles; `'chapter'` for named chapters, parts, or sub-acts within a title; `'section'` for individual sections; `'leaf'` for bulletins indexes, guidance collections, or any source with no further hierarchical children.
 
 ## DISCOVERY EXPECTATIONS
 
@@ -131,6 +132,7 @@ No prose. No markdown fences. No trailing commas.
       "jurisdiction_code": "US",
       "url": "https://...",
       "access_method": "scrape|download|api|manual",
+      "depth_hint": "title|chapter|section|leaf",
       "confidence": 0.0,
       "needs_human_review": false
     }

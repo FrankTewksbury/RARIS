@@ -12,7 +12,7 @@ interface Props {
   onResume?: () => void;
 }
 
-export function AgentProgressPanel({ events, isConnected, error, apiCalls = 0, maxApiCalls = 1500, lastCheckpoint, hasCheckpoint, onResume }: Props) {
+export function AgentProgressPanel({ events, isConnected, error, apiCalls = 0, maxApiCalls = 3000, lastCheckpoint, hasCheckpoint, onResume }: Props) {
   const isComplete = events.some((e) => e.step === "complete");
 
   // Prompt-level events (multi-prompt L1 loop)

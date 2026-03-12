@@ -397,6 +397,132 @@ ALGO-007 introduced internal LLM recursion ("enumerate everything under this nod
 
 ---
 
+### ALGO-013 — depth_hint Required in L1 Prompts; BFS Enqueue Fix
+**Date:** 2026-03-12 | **Commit:** `e3f6c87` | **Version:** V7.1 #algo
+
+**What changed:**
+
+1. **`depth_hint` added to all 4 L1 insurance prompt schemas** — `1-Insurance_Prompt_v5.md` through
+   `4-Insurance_Prompt_v5.md` were missing `depth_hint` from their `sources[]` output schema. The BFS
+   enqueue logic in `graph_discovery.py` requires `depth_hint IN ('title','chapter','section')` to
+   re-enqueue a source for deeper expansion. Without it every L1-seeded source was treated as a leaf
+   and never expanded. Added `"depth_hint": "title|chapter|section|leaf"` field and a classification
+   rule to the QUALITY RULES section of all 4 prompts.
+
+2. **`_write_checkpoint()` uses fresh session** — Long-lived `self.db` session shared across the L2
+   loop becomes stale after hundreds of flush/commit cycles. Checkpoint writes to the `Manifest` row
+   were silently no-oping. Fixed by opening `async with _async_session_factory() as fresh_db` inside
+   `_write_checkpoint()`, isolated from the loop session.
+
+3. **Session rollback on flush error** — Added `await self.db.rollback()` as first line of both outer
+   `except` handlers in `run()` and `run_resumed()`. Clears poisoned session state so subsequent nodes
+   can proceed.
+
+4. **`sources.id` / `regulatory_bodies.id` widened to VARCHAR(255)** — Compound IDs at k=3 depth exceed
+   100 chars. Migration 009 widens `sources.id`, `sources.regulatory_body_id`, `regulatory_bodies.id`.
+
+5. **`max_api_calls` raised 1500 → 3000** — Insufficient for k=3 runs with 504+ queue items.
+
+6. **Broken program count query fixed** — `__import__("sqlalchemy").table("programs").c.id` at line
+   1024 of `run_resumed()` was a malformed reflection expression causing `AttributeError: id` at run
+   completion. Fixed with `select(func.count()).select_from(Program).where(Program.manifest_id == ...)`.
+
+7. **DB repair script** — `backend/scripts/repair_depth_hint_checkpoint.py` patches existing manifests
+   with NULL `depth_hint` and writes a corrected BFS checkpoint.
+
+**Root cause of low NJ recall (ALGO-012 validation):**
+499/1005 sources (across all 50 states + territories + federal) had `depth_hint = NULL` because the
+L1 prompts never asked for it. The BFS engine silently treated all of them as leaves, so no state's
+top-level statutes or regulations were ever expanded into chapters. NJ recall was 40% (12/30) not
+because the engine couldn't find the sub-statutes — it never tried.
+
+**Before / After:**
+```
+Before: sources[].schema = {id, name, regulatory_body, type, format, authority, url, access_method, confidence}
+After:  sources[].schema = {id, name, regulatory_body, type, format, authority, url, access_method, depth_hint, confidence}
+```
+
+**Outcome:**
+- Checkpoint batch 20 confirmed written (fresh session fix validated)
+- 499 NULL depth_hint rows repaired in DB
+- 391 undrilled title sources queued for chapter expansion via repair checkpoint
+- Run resumed successfully — NJ chapter-level expansion now in progress
+- NJ recall post-expansion: TBD (measuring after current run completes)
+
+**Files changed:**
+- `prompts/1-Insurance_Prompt_v5.md` — added `depth_hint` field + classification rule
+- `prompts/2-Insurance_Prompt_v5.md` — added `depth_hint` field + classification rule
+- `prompts/3-Insurance_Prompt_v5.md` — added `depth_hint` field + classification rule
+- `prompts/4-Insurance_Prompt_v5.md` — added `depth_hint` field + classification rule
+- `backend/app/agent/graph_discovery.py` — fresh session in `_write_checkpoint`, rollbacks, program count fix
+- `backend/app/models/manifest.py` — String(255) for id columns
+- `backend/app/config.py` — max_api_calls 3000
+- `backend/alembic/versions/009_widen_id_columns.py` — NEW migration
+- `backend/scripts/repair_depth_hint_checkpoint.py` — NEW repair utility
+- `frontend/src/pages/Dashboard.tsx` — maxApiCalls 3000
+- `frontend/src/components/AgentProgressPanel.tsx` — maxApiCalls default 3000
+
+---
+
+### ALGO-014 — Dynamic Context Injection for Source Node Expansion
+**Date:** 2026-03-12 | **Commit:** pending | **Version:** V7.2 #algo
+
+**What changed:**
+
+1. **`DOMAIN_CHAPTER_HINTS` lookup table added to `prompts.py`** — keyed by `(domain_key, source_type)`,
+   returns a list of functional chapter descriptions that are structurally expected for that domain.
+   No hardcoded citation numbers — only functional categories (e.g. "claims handling and unfair claims
+   settlement practices"). Domain key is derived from `sector_key` at runtime via `_derive_domain_key()`.
+
+2. **`build_sibling_context()` function added to `prompts.py`** — takes `already_found: list[str]`
+   (citations already in DB) and `domain_hints: list[str]` (from lookup table). Returns a text block:
+   ```
+   CONTEXT — Already found under this parent: N.J.A.C. 11:1, N.J.A.C. 11:3, ...
+   Do NOT re-return any of the above — return only entries not yet listed.
+   Completeness check — ensure you have captured chapters governing: claims handling...; ...
+   ```
+   Returns empty string when both inputs are empty (no overhead for zero-context calls).
+
+3. **`build_expansion_prompt()` gains `sibling_context: str = ""` parameter** — when non-empty,
+   appended to the source-node template output before returning. Entity node calls are unaffected.
+
+4. **`_expand_node()` queries DB siblings before calling `build_expansion_prompt()`** — for
+   `source_title` and `source_chapter` nodes only. Queries `sources` where `id LIKE "{node_id}__%"`
+   but NOT `id LIKE "{node_id}%__%__%"` (direct children only, not grandchildren). Looks up domain
+   hints via `DOMAIN_CHAPTER_HINTS[(domain_key, src_type)]`. Injects combined context via
+   `build_sibling_context()`. DB query wrapped in `try/except` — failure degrades gracefully to
+   no context (no run impact).
+
+5. **`src_meta` dict gains `id` and `type` fields** — needed by `_expand_node()` to key the domain
+   hints lookup and identify the node in the sibling DB query.
+
+**Rationale:**
+Static templates ask "what are the children?" but give the LLM no signal about completeness.
+The LLM returns what it most readily recalls — prominent chapters get returned, low-profile ones
+(Claims Ch. 2, Producers Ch. 17) get skipped. ALGO-014 makes the prompt context-aware at call
+time using data the engine already has in the DB. The static templates remain generic and reusable.
+All intelligence moves into the prompt builder, not the template strings.
+
+**Before / After:**
+```
+Before: expansion_question = build_expansion_prompt(node, node_type=node_type)
+After:  sibling_context = build_sibling_context(already_found, domain_hints)
+        expansion_question = build_expansion_prompt(node, node_type=node_type, sibling_context=sibling_context)
+```
+
+**Outcome:** Validated. N.J.A.C. 11:2 (Claims/Insurance Group), 11:17 (Producer Licensing), and 11:17A
+(Producer Standards of Conduct) all appeared in the single re-expansion call. Domain hints also surfaced
+5 additional chapters: 11:16 (Fraud), 11:17B/C/D (Producer conduct sub-parts), 11:25 (Surplus Lines).
+No duplicates of already-found chapters. NJ recall: **90% (27/30)** — up from 77% pre-ALGO-014 and 40%
+pre-ALGO-013. Remaining 3 misses are cross-title statutes (39:6B, 2A:53A, 52:14B) anchored outside
+NJDOBI scope — not engine failures.
+
+**Files changed:**
+- `backend/app/agent/prompts.py` — `DOMAIN_CHAPTER_HINTS`, `_derive_domain_key()`, `build_sibling_context()`, updated `build_expansion_prompt()` signature
+- `backend/app/agent/graph_discovery.py` — `_expand_node()` sibling query + context injection, `src_meta` gains `id` and `type`
+
+---
+
 ## Success Metrics by Algorithm Version
 
 | Version | Domain | Model | K | Entities | Sources | NJ Coverage | Runtime |
@@ -411,6 +537,8 @@ ALGO-007 introduced internal LLM recursion ("enumerate everything under this nod
 | V6.1 | Insurance | Gemini Flash | 3 | 68 | 12 unique | 10/30 (33%) | ~22 min |
 | V6.2 | Insurance | Anthropic Sonnet | 3 | 93/435 | — | — | 3.5h+ (killed) |
 | V7 ALGO-012 | Insurance | TBD | 3 | TBD | TBD | TBD (target: 80%+) | TBD (target: <30 min) |
+| V7.1 ALGO-013 | Insurance | Gemini Flash | 3 | ~68 entities | 1,005 sources | 40% pre-repair / TBD post | ~9 hrs (k=3 resumed) |
+| V7.2 ALGO-014 | Insurance | Gemini Flash | 3 | — | +33 new NJ sources | 90% (27/30) — up from 77% | 1 LLM call (targeted) |
 
 ---
 

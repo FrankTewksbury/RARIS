@@ -116,7 +116,7 @@ export function Dashboard() {
               isConnected={isConnected}
               error={error}
               apiCalls={apiCalls}
-              maxApiCalls={1500}
+              maxApiCalls={3000}
               lastCheckpoint={lastCheckpoint}
               hasCheckpoint={!!manifest?.checkpoint_data}
               onResume={handleResume}

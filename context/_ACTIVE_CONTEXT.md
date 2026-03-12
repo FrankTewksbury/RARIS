@@ -1,9 +1,93 @@
 # Active Context
 
-- Updated: 2026-03-10
-- Current focus: **Insurance Domain V3 / ALGO-012** — Fine-grain BFS deployed; cap + template fixes applied; ready for seeded validation run
+- Updated: 2026-03-12
+- Current focus: **Insurance Domain V7.2 / ALGO-014** — validated 90% NJ recall; ready for full run with dynamic context injection
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
+
+## Current State
+
+ALGO-014 validated. Dynamic sibling context injection confirmed working — N.J.A.C. 11:2 (Claims),
+11:17 (Producer Licensing), 11:17A/B/C/D (Producer Conduct) all found in targeted single-call test.
+NJ recall: **90% (27/30)**. Remaining 3 misses are cross-title statutes outside NJDOBI scope.
+
+### NJ Recall History
+| Version | Recall | Notes |
+|---------|--------|-------|
+| Pre-ALGO-013 | 40% (12/30) | depth_hint NULL on all L1 sources |
+| Post-ALGO-013 | 77% (23/30) | depth_hint repair + chapter expansion |
+| Post-ALGO-014 | **90% (27/30)** | dynamic sibling context injection |
+
+### Session Changes (2026-03-12 continued)
+
+#### ALGO-014 — Dynamic Context Injection (this commit)
+- `DOMAIN_CHAPTER_HINTS` lookup table in `prompts.py` — keyed by `(domain_key, source_type)`
+- `build_sibling_context()` — assembles "already found / watch for" injection block
+- `build_expansion_prompt()` — gains `sibling_context` param; appended to source node prompts
+- `_expand_node()` — queries DB siblings + domain hints before each `source_title`/`source_chapter` call
+- `src_meta` — gains `id` and `type` fields for domain hint lookup
+- All 4 L1 insurance prompts — `depth_hint` field added to sources[] schema
+- UI API cap fixed: 1500 → 3000 in Dashboard.tsx and AgentProgressPanel.tsx
+- Session journal: `context/013-journal-2026-03-12-crash-fixes-depth-hint-repair.md`
+
+## What's Next
+
+### Immediate
+- [ ] Full insurance run with ALGO-014 active — all 391 title sources expanded with sibling context
+- [ ] Add `scripts/` to backend Dockerfile COPY list
+- [ ] Build cancel/stop API route (fix 409 loop permanently)
+- [ ] Citation normalization batch pass (see `context/012-note-citation-normalization-cleanup.md`)
+- [ ] EXP-001: restore `complete_grounded()` for L2+ to improve recall on obscure statutes
+
+## Current State
+
+Resumed run active. 391 undrilled title-level sources (all 50 states + territories + federal) now
+queued for BFS chapter expansion after depth_hint repair. Checkpoints confirmed firing correctly
+(fresh session pattern). Backend stable on commit `e3f6c87` (main).
+
+### Run in Progress
+
+- Manifest: `raris-manifest-insurance---domain-regulations-20260311023257`
+- Status: `generating`
+- Queue: 391 title sources → chapter expansion
+- Model: Gemini 3 Flash (gemini-3-flash-preview)
+- k_depth: 3
+- Checkpoints: every 50 items, fresh session write (ALGO-013 fix confirmed working)
+
+### NJ Baseline Analysis (pre-repair)
+
+- Sources found: 13 NJ sources
+- Recall: ~12/30 baseline (40%)
+- Root cause: `depth_hint = NULL` on all 499 L1-seeded sources → treated as leaves, never expanded
+- After repair: 391 title sources now queued; NJ chapter sources (17:27A, 17B:25, 17B:26...) expected
+
+### Session Changes (2026-03-12)
+
+#### ALGO-013 — Crash Fixes + depth_hint Repair (commit `e3f6c87`)
+- Widened VARCHAR(100) → VARCHAR(255) for sources.id, regulatory_bodies.id (migration 009)
+- Added session rollback to both outer except handlers in run() and run_resumed()
+- Fixed _write_checkpoint() to use fresh DB session (was silently failing with stale self.db)
+- Raised max_api_calls 1500 → 3000
+- Fixed broken program count query at run_resumed() completion
+- Added depth_hint field + classification rule to all 4 L1 insurance prompt files
+- Repaired 499 NULL depth_hint rows in DB; wrote corrected 391-item checkpoint
+- Fixed UI API cap indicator (hardcoded 1500 → 3000 in Dashboard.tsx + AgentProgressPanel.tsx)
+
+## What's Next
+
+### Immediate
+- [ ] Monitor current run — verify NJ sub-chapter sources appear (17:27A, 17B:25, 17B:26 etc.)
+- [ ] Re-run NJ baseline comparison after expansion pass completes — target 70%+
+- [ ] Add `scripts/` to backend Dockerfile COPY list
+- [ ] Build cancel/stop API route (fix 409 loop permanently — no more manual stop/start)
+- [ ] Citation normalization batch pass (see `context/012-note-citation-normalization-cleanup.md`)
+
+### Known Issues
+- **409 loop on failed resume** — backend must be fully stopped (`stop` + `up -d`) not restarted;
+  `restart` keeps uvicorn background tasks alive, keeping `_event_queues` populated
+- **scripts/ not in Dockerfile** — repair scripts must be `docker compose cp`'d into container manually
+
+
 
 ## Current State
 

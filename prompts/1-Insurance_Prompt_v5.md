@@ -84,6 +84,7 @@ When in doubt, ask: *Does this entity directly produce a binding statute, regula
 - If an entity's URL is uncertain, set `confidence` below 0.85 and set `needs_human_review: true`. Do not omit the entity.
 - For all insurance-adjacent entities, set `confidence` ≤ 0.80 and `needs_human_review: true`.
 - Leave `citation_format_hint` blank for federal entities unless a specific federal citation pattern applies (e.g., "42 U.S.C.", "45 C.F.R.").
+- For every entry in `sources[]`, set `depth_hint` to classify the document level: `'title'` for top-level statute titles or administrative code titles (e.g., "42 U.S.C. Chapter 7", "45 C.F.R. Title 45"); `'chapter'` for named chapters, parts, or sub-acts within a title; `'section'` for individual sections; `'leaf'` for bulletins indexes, circular collections, enforcement order indexes, or any source with no further hierarchical children.
 
 ## DISCOVERY EXPECTATIONS
 
@@ -126,6 +127,7 @@ No prose. No markdown fences. No trailing commas.
       "jurisdiction_code": "US",
       "url": "https://...",
       "access_method": "scrape|download|api|manual",
+      "depth_hint": "title|chapter|section|leaf",
       "confidence": 0.0,
       "needs_human_review": false
     }
