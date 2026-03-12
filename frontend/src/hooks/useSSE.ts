@@ -5,6 +5,8 @@ interface SSEState {
   events: AgentStepEvent[];
   isConnected: boolean;
   error: string | null;
+  apiCalls: number;
+  lastCheckpoint: AgentStepEvent | null;
 }
 
 export function useSSE() {
@@ -12,6 +14,8 @@ export function useSSE() {
     events: [],
     isConnected: false,
     error: null,
+    apiCalls: 0,
+    lastCheckpoint: null,
   });
   const sourceRef = useRef<EventSource | null>(null);
 
@@ -22,7 +26,7 @@ export function useSSE() {
 
     const eventSource = new EventSource(url);
     sourceRef.current = eventSource;
-    setState((s) => ({ ...s, isConnected: true, events: [], error: null }));
+    setState((s) => ({ ...s, isConnected: true, events: [], error: null, apiCalls: 0, lastCheckpoint: null }));
 
     // ── V5 BFS events ────────────────────────────────────────────────────
 
@@ -69,6 +73,32 @@ export function useSSE() {
       }));
     });
 
+    eventSource.addEventListener("prompt_start", (e) => {
+      const data = JSON.parse(e.data);
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `prompt:${data.prompt_n}:start`,
+          status: "running",
+          message: `Prompt ${data.prompt_n}/${data.prompt_total} — starting L1 sector pass`,
+          ...data,
+        }],
+      }));
+    });
+
+    eventSource.addEventListener("prompt_complete", (e) => {
+      const data = JSON.parse(e.data);
+      setState((s) => ({
+        ...s,
+        events: [...s.events, {
+          step: `prompt:${data.prompt_n}:complete`,
+          status: "complete",
+          message: `Prompt ${data.prompt_n}/${data.prompt_total} — sector pass complete`,
+          ...data,
+        }],
+      }));
+    });
+
     eventSource.addEventListener("l1_assembly_complete", (e) => {
       const data = JSON.parse(e.data);
       // #region agent log
@@ -80,6 +110,7 @@ export function useSSE() {
       // #endregion
       setState((s) => ({
         ...s,
+        apiCalls: data.api_calls ?? s.apiCalls,
         events: [...s.events, {
           step: "l1_assembly",
           status: "complete",
@@ -106,6 +137,7 @@ export function useSSE() {
       const data = JSON.parse(e.data);
       setState((s) => ({
         ...s,
+        apiCalls: data.api_calls ?? s.apiCalls,
         events: [...s.events, {
           step: `expand:${data.entity_id}`,
           status: data.status === "failed" ? "failed" : "complete",
@@ -114,6 +146,21 @@ export function useSSE() {
             : `${data.entity_name} — ${data.programs_found ?? 0} programs`,
           ...data,
         }],
+      }));
+    });
+
+    eventSource.addEventListener("checkpoint_written", (e) => {
+      const data = JSON.parse(e.data);
+      const checkpointEvent: AgentStepEvent = {
+        step: `checkpoint:${data.type}`,
+        status: "complete",
+        message: `Sync point — ${data.type === "l1_boundary" ? "L1 boundary" : `L2 batch ${data.batch_n}`} (${data.items_remaining ?? 0} items remaining)`,
+        ...data,
+      };
+      setState((s) => ({
+        ...s,
+        lastCheckpoint: checkpointEvent,
+        events: [...s.events, checkpointEvent],
       }));
     });
 
@@ -176,7 +223,7 @@ export function useSSE() {
 
   const reset = useCallback(() => {
     sourceRef.current?.close();
-    setState({ events: [], isConnected: false, error: null });
+    setState({ events: [], isConnected: false, error: null, apiCalls: 0, lastCheckpoint: null });
   }, []);
 
   return { ...state, connect, disconnect, reset };

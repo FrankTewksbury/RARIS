@@ -41,6 +41,8 @@ class SourceResponse(BaseModel):
     review_notes: str | None = None
     classification_tags: list[str] = []
     relationships: dict = {}
+    citation: str | None = None
+    depth_hint: str | None = None
 
 
 class SourceCreate(BaseModel):
@@ -59,6 +61,8 @@ class SourceCreate(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0, default=1.0)
     needs_human_review: bool = False
     classification_tags: list[str] = []
+    citation: str | None = None
+    depth_hint: str | None = None
 
 
 class SourceUpdate(BaseModel):
@@ -164,6 +168,8 @@ class ManifestDetail(BaseModel):
     programs: list[ProgramResponse] = []
     domain_map: DomainMapResponse = DomainMapResponse()
     coverage_assessment: CoverageAssessmentResponse | None = None
+    checkpoint_data: dict | None = None
+    run_params: dict | None = None
 
 
 class ManifestListResponse(BaseModel):

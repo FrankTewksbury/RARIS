@@ -119,6 +119,8 @@ class Manifest(Base):
     jurisdiction_hierarchy: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     coverage_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     review_history: Mapped[list | None] = mapped_column(JSONB, default=list)
+    checkpoint_data: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    run_params: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     # Relationships
     regulatory_bodies: Mapped[list["RegulatoryBody"]] = relationship(
@@ -141,7 +143,7 @@ class Manifest(Base):
 class RegulatoryBody(Base):
     __tablename__ = "regulatory_bodies"
 
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     manifest_id: Mapped[str] = mapped_column(ForeignKey("manifests.id"), primary_key=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     jurisdiction: Mapped[Jurisdiction] = mapped_column(Enum(Jurisdiction))
@@ -156,10 +158,10 @@ class RegulatoryBody(Base):
 class Source(Base):
     __tablename__ = "sources"
 
-    id: Mapped[str] = mapped_column(String(100), primary_key=True)
+    id: Mapped[str] = mapped_column(String(255), primary_key=True)
     manifest_id: Mapped[str] = mapped_column(ForeignKey("manifests.id"), primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    regulatory_body_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    regulatory_body_id: Mapped[str] = mapped_column(String(255), nullable=False)
     type: Mapped[SourceType] = mapped_column(Enum(SourceType))
     format: Mapped[SourceFormat] = mapped_column(Enum(SourceFormat))
     authority: Mapped[AuthorityLevel] = mapped_column(Enum(AuthorityLevel))
@@ -170,6 +172,8 @@ class Source(Base):
     last_known_update: Mapped[str | None] = mapped_column(String(50), nullable=True)
     estimated_size: Mapped[str | None] = mapped_column(String(20), nullable=True)
     scraping_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    citation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    depth_hint: Mapped[str | None] = mapped_column(String(20), nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     needs_human_review: Mapped[bool] = mapped_column(Boolean, default=False)
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)

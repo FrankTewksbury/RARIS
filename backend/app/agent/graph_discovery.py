@@ -37,6 +37,8 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import async_session as _async_session_factory
+
 from app.agent.discovery import _extract_json, _safe_enum
 from app.agent.discovery_queue import DiscoveryQueue
 from app.agent.prompts import L0_ORCHESTRATOR_SYSTEM, SECTOR_SCOPE_HEADER, DISCOVERY_OUTPUT_SCHEMA, build_expansion_prompt, resolve_jurisdiction_code, JURISDICTION_CITATION_HINTS
@@ -268,18 +270,20 @@ class DiscoveryGraph:
         seed_programs: list[dict] | None = None,
         seed_anchors: list[dict] | None = None,
         constitution_text: str = "",
-        instruction_text: str = "",
+        instruction_texts: list[str] | None = None,
     ) -> AsyncGenerator[dict, None]:
         """Execute V6 RLM BFS discovery, yielding SSE events.
 
         sectors: list of sector dicts from uploaded sector file.
                  If empty or None, neutral runtime sectors are built from geo_scope.
-        instruction_text: full text of the uploaded instruction file.
-                          Each sector call receives this verbatim, prefixed by
-                          a sector scope header. No domain content lives in code.
+        instruction_texts: list of instruction texts in execution order.
+                           Each text drives one full L1 sector pass; results are
+                           merged before entering L2 BFS. Accepts a single item
+                           for backward-compatible single-prompt runs.
         """
-        if not instruction_text.strip():
-            raise ValueError("instruction_text is required for discovery runs")
+        _texts = [t.strip() for t in (instruction_texts or []) if t and t.strip()]
+        if not _texts:
+            raise ValueError("instruction_texts is required for discovery runs")
 
         runtime_sectors = sectors if sectors else _build_runtime_sectors(geo_scope)
         if not sectors:
@@ -296,16 +300,15 @@ class DiscoveryGraph:
         _seed_index = seed_index or {}
         _seed_programs = seed_programs or []
         _seed_anchors = seed_anchors or []
-        _instruction = instruction_text.strip()
 
-        # Prepend constitution guardrails if provided
+        # Prepend constitution guardrails to each instruction text if provided
         if constitution_text.strip():
-            _instruction = (
+            _constitution_prefix = (
                 "## Operational Guardrails (apply throughout)\n\n"
                 + constitution_text.strip()
                 + "\n\n---\n\n"
-                + _instruction
             )
+            _texts = [_constitution_prefix + t for t in _texts]
 
         # Safety caps from config
         max_api_calls = settings.max_api_calls
@@ -327,12 +330,12 @@ class DiscoveryGraph:
         source_id_counter = 1
         self._api_calls = 0
 
-        # ── L1: Parallel Sector Discovery (seeds the queue) ──────────────
+        # ── L1: Serial Prompt Loop → Parallel Sector Discovery (seeds the queue) ─
         l1_start_time = time.monotonic()
         log_stage("l1_sector_discovery", status="running", model=getattr(self.llm, "model", ""), manifest_id=self.manifest_id)
-        async for event in self._run_l1_sectors(
+        async for event in self._run_l1_prompts(
             sectors=_sectors,
-            instruction_text=_instruction,
+            instruction_texts=_texts,
             sector_concurrency=sector_concurrency,
             max_entities_per_sector=max_entities_per_sector,
             max_api_calls=max_api_calls,
@@ -414,6 +417,8 @@ class DiscoveryGraph:
                     or float(src_data.get("confidence", 0.5) or 0.5) < 0.5
                 ),
                 classification_tags=src_data.get("classification_tags", []),
+                citation=src_data.get("citation") or src_data.get("name"),
+                depth_hint=(src_data.get("depth_hint") or "").strip().lower() or None,
             ))
 
         manifest = await self.db.get(Manifest, self.manifest_id)
@@ -430,7 +435,16 @@ class DiscoveryGraph:
                           total_entities=len(all_entities),
                           total_sources=len(all_sources),
                           sector_count=len(_sectors),
+                          api_calls=self._api_calls,
                           queue_stats=queue.stats())
+
+        # Write L1 boundary checkpoint so a resume can skip L1 entirely
+        yield await self._write_checkpoint(
+            queue=queue,
+            checkpoint_type="l1_boundary",
+            batch_n=0,
+            api_calls_used=self._api_calls,
+        )
 
         # Inject seed anchors that weren't already queued from L1.
         # This guarantees all known entities enter the BFS regardless of L1 coverage.
@@ -516,6 +530,10 @@ class DiscoveryGraph:
         l2_seen_source_ids: set[str] = set()
 
         while not queue.is_empty():
+            # Pace outgoing LLM calls to stay within Gemini RPM quota
+            if settings.l2_sleep_between_calls > 0:
+                await asyncio.sleep(settings.l2_sleep_between_calls)
+
             # Safety cap: stop if we've hit the API call limit
             if self._api_calls >= max_api_calls:
                 logger.warning(
@@ -589,6 +607,8 @@ class DiscoveryGraph:
                             or float(src.get("confidence", 0.5) or 0.5) < 0.5
                         ),
                         classification_tags=src.get("classification_tags", []),
+                        citation=src.get("citation") or src.get("name"),
+                        depth_hint=(src.get("depth_hint") or "").strip().lower() or None,
                     ))
 
                     # ALGO-012: Enqueue source nodes for deeper BFS traversal based on depth_hint.
@@ -676,7 +696,8 @@ class DiscoveryGraph:
                                   programs_found=len(programs),
                                   sources_found=len(sources),
                                   children_enqueued=enqueued_children,
-                                  queue_pending=queue.size())
+                                  queue_pending=queue.size(),
+                                  api_calls=self._api_calls)
 
                 # Heartbeat every 30s during long expansion phases
                 elapsed = time.monotonic() - l2_start_time
@@ -689,7 +710,18 @@ class DiscoveryGraph:
                         manifest_id=self.manifest_id,
                     )
 
+                # Periodic L2 checkpoint every 50 items processed
+                if entity_n % 50 == 0:
+                    batch_n = entity_n // 50
+                    yield await self._write_checkpoint(
+                        queue=queue,
+                        checkpoint_type="l2_batch",
+                        batch_n=batch_n,
+                        api_calls_used=self._api_calls,
+                    )
+
             except Exception as exc:
+                await self.db.rollback()
                 self._api_calls += 1
                 logger.warning("[graph v6] node expansion failed for '%s' (type=%s): %s",
                                node_name, node_type, exc)
@@ -701,7 +733,8 @@ class DiscoveryGraph:
                                   depth=item.depth,
                                   status="failed",
                                   error=str(exc),
-                                  programs_found=0)
+                                  programs_found=0,
+                                  api_calls=self._api_calls)
 
         # Dedup programs
         deduped = self._dedupe_programs(all_programs)
@@ -786,6 +819,299 @@ class DiscoveryGraph:
                               k: v["rate"] for k, v in seed_match_by_topic.items()
                           })
 
+    # ── Resume: skip L1, restore queue from checkpoint ───────────────────
+
+    async def run_resumed(
+        self,
+        manifest_name: str,
+        *,
+        checkpoint: dict,
+        k_depth: int = 2,
+    ) -> AsyncGenerator[dict, None]:
+        """Resume a halted discovery run from a saved checkpoint.
+
+        Skips L1 entirely. Restores the ``DiscoveryQueue`` from the
+        ``checkpoint_data`` snapshot and continues L2 BFS expansion.
+        All entities are already in the DB from the original run; this
+        method only adds new programs and sources found during continued
+        expansion.
+        """
+        from sqlalchemy import select as _select
+
+        max_api_calls = settings.max_api_calls
+        queue_max_depth = min(k_depth - 1, settings.max_discovery_depth)
+
+        queue = DiscoveryQueue.from_snapshot({
+            **checkpoint,
+            "max_depth": queue_max_depth,
+        })
+        registry = EntityRegistry()
+        all_programs: list[dict] = []
+        source_id_counter = 1
+        l2_seen_source_ids: set[str] = set()
+        self._api_calls = 0
+
+        yield self._event("resume_start",
+                          manifest_id=self.manifest_id,
+                          queue_size=queue.size(),
+                          checkpoint_type=checkpoint.get("type", "unknown"),
+                          batch_n=checkpoint.get("batch_n", 0),
+                          api_calls_used_prior=checkpoint.get("api_calls_used", 0))
+
+        log_stage("l2_queue_expansion_resumed", status="running",
+                  model=getattr(self.llm, "model", ""), manifest_id=self.manifest_id)
+
+        l2_start_time = time.monotonic()
+        entity_n = 0
+        entity_total = queue.size()
+
+        while not queue.is_empty():
+            # Pace outgoing LLM calls to stay within Gemini RPM quota
+            if settings.l2_sleep_between_calls > 0:
+                await asyncio.sleep(settings.l2_sleep_between_calls)
+
+            if self._api_calls >= max_api_calls:
+                logger.warning(
+                    "[graph v6 resume] API call limit reached (%d/%d) — stopping",
+                    self._api_calls, max_api_calls,
+                )
+                break
+
+            item = queue.pop()
+            if item is None:
+                break
+
+            entity_n += 1
+            node = item.metadata
+            node_id = item.target_id
+            node_name = node.get("name", node_id)
+            node_type = item.target_type
+
+            yield self._event("entity_expansion_start",
+                              entity_id=node_id,
+                              entity_name=node_name,
+                              entity_n=entity_n,
+                              entity_total=entity_total,
+                              depth=item.depth,
+                              node_type=node_type,
+                              queue_pending=queue.size(),
+                              citation_format=node.get("citation_format_hint", ""),
+                              jurisdiction_code=node.get("jurisdiction_code", ""))
+
+            try:
+                result = await asyncio.wait_for(
+                    self._expand_node(node=node, node_type=node_type, depth=item.depth),
+                    timeout=180.0,
+                )
+                self._api_calls += 1
+
+                programs = result.get("programs", [])
+                sources = result.get("sources", [])
+                sub_entities = result.get("administering_entities", [])
+                enqueued_children = 0
+
+                for src in sources:
+                    src.setdefault("id", f"src-{source_id_counter:03d}")
+                    source_id_counter += 1
+                    raw_sid = src["id"]
+                    sid = f"{node_id}__{raw_sid}"
+                    src["id"] = sid
+                    if sid in l2_seen_source_ids:
+                        continue
+                    l2_seen_source_ids.add(sid)
+                    depth_hint = src.get("depth_hint", "leaf")
+                    if depth_hint in ("title", "chapter", "section"):
+                        enqueued = queue.enqueue(
+                            target_type=f"source_{depth_hint}",
+                            target_id=sid,
+                            priority=2,
+                            discovered_from=f"entity:{node_id}",
+                            depth=item.depth + 1,
+                            metadata={**src, "parent_entity_id": node_id},
+                        )
+                        if enqueued:
+                            enqueued_children += 1
+                    try:
+                        self.db.add(Source(
+                            id=sid,
+                            manifest_id=self.manifest_id,
+                            name=src.get("name", "Unknown Source"),
+                            regulatory_body_id=registry.resolve_id(src.get("regulatory_body", "")),
+                            type=_safe_enum(SourceType, src.get("type")),
+                            format=_safe_enum(SourceFormat, src.get("format")),
+                            authority=_safe_enum(AuthorityLevel, src.get("authority")),
+                            jurisdiction=_safe_enum(Jurisdiction, src.get("jurisdiction")),
+                            url=src.get("url", ""),
+                            access_method=_safe_enum(AccessMethod, src.get("access_method")),
+                            update_frequency=src.get("update_frequency"),
+                            last_known_update=src.get("last_known_update"),
+                            estimated_size=src.get("estimated_size"),
+                            scraping_notes=src.get("scraping_notes"),
+                            confidence=float(src.get("confidence", 0.0) or 0.0),
+                            needs_human_review=bool(src.get("needs_human_review", False)),
+                            classification_tags=src.get("classification_tags", []),
+                            relationships=src.get("relationships", {}),
+                            citation=src.get("citation") or src.get("name"),
+                            depth_hint=(src.get("depth_hint") or "").strip().lower() or None,
+                        ))
+                    except Exception:
+                        pass
+
+                all_programs.extend(programs)
+
+                await self.db.flush()
+
+                entity_id = node_id
+                entity_name = node_name
+                yield self._event("entity_expansion_complete",
+                                  entity_id=entity_id,
+                                  entity_name=entity_name,
+                                  entity_n=entity_n,
+                                  entity_total=entity_total,
+                                  depth=item.depth,
+                                  node_type=node_type,
+                                  programs_found=len(programs),
+                                  sources_found=len(sources),
+                                  children_enqueued=enqueued_children,
+                                  queue_pending=queue.size(),
+                                  api_calls=self._api_calls)
+
+                elapsed = time.monotonic() - l2_start_time
+                if elapsed > 30 and entity_n % 3 == 0:
+                    log_heartbeat(
+                        stage="l2_queue_expansion_resumed",
+                        batch=f"{entity_n}/{entity_total}",
+                        items_so_far=len(all_programs),
+                        elapsed_s=elapsed,
+                        manifest_id=self.manifest_id,
+                    )
+
+                if entity_n % 50 == 0:
+                    batch_n = entity_n // 50
+                    yield await self._write_checkpoint(
+                        queue=queue,
+                        checkpoint_type="l2_batch",
+                        batch_n=batch_n,
+                        api_calls_used=self._api_calls,
+                    )
+
+            except Exception as exc:
+                await self.db.rollback()
+                self._api_calls += 1
+                logger.warning("[graph v6 resume] node expansion failed for '%s': %s", node_name, exc)
+                yield self._event("entity_expansion_complete",
+                                  entity_id=node_id,
+                                  entity_name=node_name,
+                                  entity_n=entity_n,
+                                  entity_total=entity_total,
+                                  depth=item.depth,
+                                  status="failed",
+                                  error=str(exc),
+                                  programs_found=0,
+                                  api_calls=self._api_calls)
+
+        # Dedup and persist new programs discovered during resume
+        deduped = self._dedupe_programs(all_programs)
+
+        # Query manifest for final status update
+        manifest = await self.db.get(Manifest, self.manifest_id)
+
+        if deduped:
+            # Determine next program row offset to avoid PK collision
+            from sqlalchemy import func as _func
+            count_result = await self.db.execute(
+                _select(_func.count()).select_from(
+                    __import__("sqlalchemy", fromlist=["Table"]).table("programs").c.id
+                )
+            )
+            existing_count = 0
+            try:
+                existing_count = count_result.scalar() or 0
+            except Exception:
+                pass
+
+            for idx, program_data in enumerate(deduped, start=existing_count + 1):
+                confidence = float(program_data.get("confidence", 0.0) or 0.0)
+                needs_review = bool(
+                    program_data.get("needs_human_review", False) or confidence < 0.5
+                )
+                self.db.add(Program(
+                    id=self._program_row_id(idx),
+                    manifest_id=self.manifest_id,
+                    canonical_id=self._canonical_program_id(program_data),
+                    name=program_data.get("name", "Unknown Program"),
+                    administering_entity=program_data.get("administering_entity", "Unknown"),
+                    geo_scope=_safe_enum(
+                        ProgramGeoScope, program_data.get("geo_scope"), ProgramGeoScope.state,
+                    ),
+                    jurisdiction=program_data.get("jurisdiction"),
+                    benefits=program_data.get("benefits"),
+                    eligibility=program_data.get("eligibility"),
+                    status=_safe_enum(
+                        ProgramStatus, program_data.get("status"), ProgramStatus.verification_pending,
+                    ),
+                    source_urls=program_data.get("source_urls", []),
+                    provenance_links=program_data.get("provenance_links", {}),
+                    confidence=confidence,
+                    needs_human_review=needs_review,
+                ))
+
+        if manifest:
+            manifest.status = ManifestStatus.pending_review
+        await self.db.commit()
+
+        yield self._event("complete",
+                          manifest_id=self.manifest_id,
+                          total_programs=len(deduped),
+                          api_calls=self._api_calls,
+                          queue_stats=queue.stats(),
+                          resumed=True)
+
+    # ── L1: Serial Prompt Loop ────────────────────────────────────────────
+
+    async def _run_l1_prompts(
+        self,
+        sectors: list[dict],
+        instruction_texts: list[str],
+        sector_concurrency: int = 3,
+        max_entities_per_sector: int = 200,
+        max_api_calls: int = 200,
+    ) -> AsyncGenerator[dict, None]:
+        """Loop over instruction_texts serially, running a full sector pass per prompt.
+
+        Yields all SSE events from each pass. The caller's seen_entity_ids / seen_source_ids
+        sets (in run()) handle dedup across passes — no extra logic needed here.
+        """
+        total_prompts = len(instruction_texts)
+        for idx, instruction_text in enumerate(instruction_texts):
+            prompt_n = idx + 1
+            yield self._event(
+                "prompt_start",
+                prompt_n=prompt_n,
+                prompt_total=total_prompts,
+            )
+            logger.info(
+                "[graph v6] L1 prompt %d/%d starting",
+                prompt_n, total_prompts,
+            )
+            async for event in self._run_l1_sectors(
+                sectors=sectors,
+                instruction_text=instruction_text,
+                sector_concurrency=sector_concurrency,
+                max_entities_per_sector=max_entities_per_sector,
+                max_api_calls=max_api_calls,
+            ):
+                yield event
+            yield self._event(
+                "prompt_complete",
+                prompt_n=prompt_n,
+                prompt_total=total_prompts,
+            )
+            logger.info(
+                "[graph v6] L1 prompt %d/%d complete",
+                prompt_n, total_prompts,
+            )
+
     # ── L1: Parallel Sector Calls ─────────────────────────────────────────
 
     async def _run_l1_sectors(
@@ -793,7 +1119,7 @@ class DiscoveryGraph:
         sectors: list[dict],
         instruction_text: str,
         sector_concurrency: int = 3,
-        max_entities_per_sector: int = 50,
+        max_entities_per_sector: int = 200,
         max_api_calls: int = 200,
     ) -> AsyncGenerator[dict, None]:
         """Run all sector calls, yielding SSE events and internal result events."""
@@ -873,6 +1199,12 @@ class DiscoveryGraph:
                             sector["key"], len(entities), max_entities_per_sector,
                         )
                         entities = entities[:max_entities_per_sector]
+                    elif len(entities) > int(max_entities_per_sector * 0.8):
+                        logger.warning(
+                            "[graph v6] sector '%s' returned %d entities — near cap (%d); "
+                            "results may be truncated if LLM returns more in future runs",
+                            sector["key"], len(entities), max_entities_per_sector,
+                        )
 
                     logger.info(
                         "[graph v6] sector '%s' OK — entities=%d programs=%d sources=%d",
@@ -1140,6 +1472,54 @@ class DiscoveryGraph:
     @staticmethod
     def _event(event_type: str, **data) -> dict:
         return {"event": event_type, "data": data}
+
+    # ── Checkpoint / Resume ───────────────────────────────────────────────
+
+    async def _write_checkpoint(
+        self,
+        queue: DiscoveryQueue,
+        checkpoint_type: str,
+        batch_n: int,
+        api_calls_used: int,
+    ) -> dict:
+        """Persist a queue snapshot to ``manifest.checkpoint_data`` and return
+        the ``checkpoint_written`` SSE event dict.
+
+        The snapshot shape matches the plan spec:
+        ``{"type", "batch_n", "api_calls_used", "queue_items", "visited", "written_at"}``
+        """
+        import datetime as _dt
+
+        snapshot = queue.to_snapshot()
+        checkpoint = {
+            "type": checkpoint_type,
+            "batch_n": batch_n,
+            "api_calls_used": api_calls_used,
+            "queue_items": snapshot["queue_items"],
+            "visited": snapshot["visited"],
+            "written_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        }
+        # Use a fresh session to avoid the stale/poisoned long-lived self.db
+        # session that accumulates state across hundreds of source writes.
+        try:
+            async with _async_session_factory() as fresh_db:
+                manifest = await fresh_db.get(Manifest, self.manifest_id)
+                if manifest is not None:
+                    manifest.checkpoint_data = checkpoint
+                    await fresh_db.commit()
+                    logger.info(
+                        "[graph v6] checkpoint written type=%s batch=%d items=%d visited=%d",
+                        checkpoint_type, batch_n, len(snapshot["queue_items"]), len(snapshot["visited"]),
+                    )
+        except Exception as cp_exc:
+            logger.error("[graph v6] checkpoint write failed: %s", cp_exc)
+        return self._event(
+            "checkpoint_written",
+            type=checkpoint_type,
+            batch_n=batch_n,
+            items_remaining=len(snapshot["queue_items"]),
+            api_calls_used=api_calls_used,
+        )
 
     # ── Utility: Name normalization ───────────────────────────────────────
 

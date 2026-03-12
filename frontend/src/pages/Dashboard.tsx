@@ -13,7 +13,7 @@ import type { Source } from "../types/manifest";
 export function Dashboard() {
   const [activeManifestId, setActiveManifestId] = useState<string | undefined>();
   const [showResults, setShowResults] = useState(false);
-  const { events, isConnected, error, connect, reset: resetSSE } = useSSE();
+  const { events, isConnected, error, apiCalls, lastCheckpoint, connect, reset: resetSSE } = useSSE();
 
   const { data: manifests, refetch: refetchList } = useManifestList();
   const { data: manifest, refetch: refetchManifest, isLoading: isManifestLoading } = useManifest(activeManifestId);
@@ -57,6 +57,16 @@ export function Dashboard() {
     updateSource.mutate({ sourceId, update });
   };
 
+  const handleResume = async () => {
+    if (!activeManifestId) return;
+    const resp = await fetch(`/api/manifests/${activeManifestId}/resume`, { method: "POST" });
+    if (resp.ok) {
+      const data = await resp.json();
+      setShowResults(false);
+      connect(data.stream_url);
+    }
+  };
+
   return (
     <div className="dashboard">
       <header className="dashboard-header">
@@ -66,7 +76,7 @@ export function Dashboard() {
       <div className="dashboard-layout">
         {/* Sidebar — Manifest list */}
         <aside className="dashboard-sidebar">
-          <DomainInputPanel onGenerate={handleGenerate} isGenerating={isConnected} />
+          <DomainInputPanel onGenerate={handleGenerate} isGenerating={isConnected} initialRunParams={manifest?.run_params} />
 
           {manifests && manifests.length > 0 && (
             <div className="panel manifest-list-panel">
@@ -101,7 +111,16 @@ export function Dashboard() {
         <main className="dashboard-main">
           {/* Agent progress — show when generating */}
           {(isConnected || events.length > 0 || error) && (
-            <AgentProgressPanel events={events} isConnected={isConnected} error={error} />
+            <AgentProgressPanel
+              events={events}
+              isConnected={isConnected}
+              error={error}
+              apiCalls={apiCalls}
+              maxApiCalls={1500}
+              lastCheckpoint={lastCheckpoint}
+              hasCheckpoint={!!manifest?.checkpoint_data}
+              onResume={handleResume}
+            />
           )}
 
           {/* View Results prompt after completion */}
@@ -123,6 +142,21 @@ export function Dashboard() {
           {showResults && !isManifestLoading && manifest && (
             <div className="manifest-results">
               <ManifestSummaryCard manifest={manifest} />
+
+              {/* Resume from checkpoint — visible whenever manifest has a checkpoint, regardless of SSE state */}
+              {manifest.status === "pending_review" && manifest.checkpoint_data && !isConnected && (
+                <div className="panel resume-panel">
+                  <div className="resume-action">
+                    <p className="resume-hint">
+                      This run has a saved sync point ({manifest.checkpoint_data.type === "l1_boundary" ? "L1 boundary" : `L2 batch ${manifest.checkpoint_data.batch_n}`}).
+                      Resume will skip L1 and continue BFS expansion from where it stopped.
+                    </p>
+                    <button className="btn btn-resume" onClick={handleResume}>
+                      Resume from Checkpoint
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <ProgramsTable programs={manifest.programs} />
 

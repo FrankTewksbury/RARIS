@@ -167,3 +167,50 @@ class DiscoveryQueue:
             "by_depth": dict(sorted(depth_counts.items())),
             "by_type": dict(sorted(type_counts.items())),
         }
+
+    def to_snapshot(self) -> dict[str, Any]:
+        """Serialize the queue to a JSON-safe dict for checkpoint persistence.
+
+        The snapshot captures the remaining heap items and visited set so the
+        queue can be fully rehydrated by ``from_snapshot()``.
+        """
+        return {
+            "queue_items": [item.to_dict() for item in self._heap],
+            "visited": list(self._visited),
+            "seq": self._seq,
+            "max_depth": self.max_depth,
+            "max_size": self.max_size,
+        }
+
+    @classmethod
+    def from_snapshot(cls, snapshot: dict[str, Any]) -> "DiscoveryQueue":
+        """Rehydrate a ``DiscoveryQueue`` from a snapshot dict.
+
+        The queue is rebuilt from the serialized heap items and visited set,
+        restoring heap order. ``seq`` counter is also restored so new items
+        continue from the correct ordinal.
+        """
+        q = cls(
+            max_depth=snapshot.get("max_depth", 3),
+            max_size=snapshot.get("max_size", 2000),
+        )
+        q._visited = set(snapshot.get("visited", []))
+        q._seq = snapshot.get("seq", 0)
+        for item_dict in snapshot.get("queue_items", []):
+            q._seq += 1
+            item = QueueItem(
+                priority=item_dict["priority"],
+                depth=item_dict["depth"],
+                _seq=q._seq,
+                target_type=item_dict["target_type"],
+                target_id=item_dict["target_id"],
+                discovered_from=item_dict.get("discovered_from", ""),
+                metadata=item_dict.get("metadata", {}),
+            )
+            heapq.heappush(q._heap, item)
+        q._enqueued_total = len(q._heap)
+        logger.info(
+            "[queue] restored from snapshot — %d items, %d visited",
+            len(q._heap), len(q._visited),
+        )
+        return q

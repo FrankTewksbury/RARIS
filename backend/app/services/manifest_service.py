@@ -61,6 +61,8 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
             review_notes=s.review_notes,
             classification_tags=s.classification_tags or [],
             relationships=s.relationships or {},
+            citation=s.citation,
+            depth_hint=s.depth_hint,
         )
         for s in manifest.sources
     ]
@@ -131,6 +133,8 @@ async def get_manifest(db: AsyncSession, manifest_id: str) -> ManifestDetail | N
             jurisdiction_hierarchy=manifest.jurisdiction_hierarchy or [],
         ),
         coverage_assessment=coverage,
+        checkpoint_data=manifest.checkpoint_data,
+        run_params=manifest.run_params,
     )
 
 
@@ -206,6 +210,8 @@ async def update_source(
         review_notes=source.review_notes,
         classification_tags=source.classification_tags or [],
         relationships=source.relationships or {},
+        citation=source.citation,
+        depth_hint=source.depth_hint,
     )
 
 
@@ -266,6 +272,8 @@ async def add_source(
         review_notes=source.review_notes,
         classification_tags=source.classification_tags or [],
         relationships=source.relationships or {},
+        citation=source.citation,
+        depth_hint=source.depth_hint,
     )
 
 

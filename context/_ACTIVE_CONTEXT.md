@@ -1,7 +1,7 @@
 # Active Context
 
-- Updated: 2026-03-09
-- Current focus: **Insurance Domain V3** — Engine wired for jurisdiction-aware BFS; ready for full K=1 validation run
+- Updated: 2026-03-10
+- Current focus: **Insurance Domain V3 / ALGO-012** — Fine-grain BFS deployed; cap + template fixes applied; ready for seeded validation run
 - Agent constitution: [CLAUDE.md](../CLAUDE.md)
 - Operating manual: [docs/DFW-OPERATING-MANUAL.md](../docs/DFW-OPERATING-MANUAL.md)
 
@@ -63,7 +63,36 @@ V6 RLM BFS engine is production-ready with multi-provider, multi-model support. 
 - Added SSE `reset()` — clears stale progress panel when selecting sidebar manifests
 - Added loading state for manifest detail fetch
 
-## Session Changes (2026-03-09)
+## Session Changes (2026-03-10)
+
+### ALGO-012 — Fine-Grain BFS Recursion (commit `b7ef7c3`)
+- Replaced monolithic exhaustive-enumeration prompt with 13 node-type-keyed single-question templates
+- Source nodes enter BFS queue via `depth_hint` field (`title|chapter|section|leaf`)
+- `_expand_entity()` → `_expand_node()` — dispatches by `node_type`
+- `[RUN-{timestamp}]` tag on all log output for run correlation
+- Confirmed working: `NODE EXPANSION — DEPTH L3 [source_title]` firing; 284 queue items in live run
+
+### ALGO-012 Validation Run (`20260310183101`) Results
+- State dept coverage: 41/52 (79%) — 11 states missed (RI, SC, SD, TN, UT, VA, VT, WA, WI, WV, WY + DC)
+- Federal/national: 11/11 (100%)
+- Industry/trade: 5/17 (29%)
+- NJ DOBI L2 expansion returned zero sources — `node:entity:regulator` template too strict
+
+### Cap + Template Fixes Applied (2026-03-10 EOD)
+- Raised `max_entities_per_sector` 50 → 200 in `backend/app/config.py` and `graph_discovery.py` default
+- Added near-cap proximity warning (>80% of cap) in `_run_l1_sectors()`
+- Loosened `node:entity:regulator` template in `prompts.py`: now asks for titles AND immediate chapters, allows `depth_hint='chapter'`, includes fallback guidance for uncertain models
+
+## What's Next
+
+### Immediate — Next Session
+- [ ] Rebuild backend container with cap + template fixes
+- [ ] Run k=3 with seed file (`Insurance_seed_v1.md`) on Gemini Flash
+- [ ] Compare against NJ baseline (`research/NJ-example_statutes.md`) — target 70%+ coverage
+- [ ] Verify `depth_hint` persisted on source rows from NJ DOBI expansion
+- [ ] Consider EXP-003 (source dedup by `(name, entity_id)`) if 5x duplicates persist
+
+
 
 ### Insurance V3 Engine Wiring
 - Fixed `authority_type` field mapping bug — was reading `entity_type` key, now reads `authority_type` with `entity_type` fallback

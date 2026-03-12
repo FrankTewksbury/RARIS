@@ -1,9 +1,17 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { GenerateResponse } from "../types/manifest";
+
+interface RunParams {
+  llm_provider?: string;
+  llm_model?: string | null;
+  k_depth?: number;
+  geo_scope?: string;
+}
 
 interface Props {
   onGenerate: (manifestId: string, streamUrl: string) => void;
   isGenerating: boolean;
+  initialRunParams?: RunParams | null;
 }
 
 const LLM_PROVIDERS = ["anthropic", "openai", "gemini"];
@@ -33,7 +41,7 @@ const ACCEPTED_SECTOR_TYPES = ".json";
 const SUPPORTED_EXTENSIONS = [".txt", ".md", ".pdf", ".docx"];
 const SUPPORTED_SEED_EXTENSIONS = [".json", ".jsonl", ".csv", ".txt", ".md"];
 
-export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
+export function DomainInputPanel({ onGenerate, isGenerating, initialRunParams }: Props) {
   const [domain, setDomain] = useState("");
   const [provider, setProvider] = useState("anthropic");
   const [model, setModel] = useState(PROVIDER_MODELS["anthropic"][0].value);
@@ -41,7 +49,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const [geoScope, setGeoScope] = useState<(typeof GEO_SCOPES)[number]>("state");
   const [targetSegments, setTargetSegments] = useState("");
   const [constitutionFile, setConstitutionFile] = useState<File | null>(null);
-  const [instructionFile, setInstructionFile] = useState<File | null>(null);
+  const [instructionFiles, setInstructionFiles] = useState<File[]>([]);
   const [sectorFile, setSectorFile] = useState<File | null>(null);
   const [seedingFiles, setSeedingFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +57,22 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const instructionInputRef = useRef<HTMLInputElement>(null);
   const sectorInputRef = useRef<HTMLInputElement>(null);
   const seedingInputRef = useRef<HTMLInputElement>(null);
+
+  // Pre-populate form when a manifest with run_params is selected
+  useEffect(() => {
+    if (!initialRunParams) return;
+    const newProvider = initialRunParams.llm_provider ?? "anthropic";
+    const newModel =
+      initialRunParams.llm_model ??
+      PROVIDER_MODELS[newProvider]?.[0]?.value ??
+      "";
+    const newKDepth = initialRunParams.k_depth ?? 2;
+    const newGeoScope = (initialRunParams.geo_scope as (typeof GEO_SCOPES)[number]) ?? "state";
+    setProvider(newProvider);
+    setModel(newModel);
+    setKDepth(newKDepth);
+    setGeoScope(newGeoScope);
+  }, [initialRunParams]);
 
   const isSupportedFile = (file: File) => {
     const filename = file.name.toLowerCase();
@@ -87,6 +111,36 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
     setSectorFile(file);
   };
 
+  const handleInstructionSelection = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const selected = Array.from(files);
+    const invalid = selected.find((file) => !isSupportedFile(file));
+    if (invalid) {
+      setError("Unsupported file type. Use .txt, .md, .pdf, or .docx.");
+      return;
+    }
+    setError(null);
+    setInstructionFiles((current) => {
+      const dedup = new Map(current.map((file) => [file.name, file]));
+      selected.forEach((file) => dedup.set(file.name, file));
+      return Array.from(dedup.values());
+    });
+  };
+
+  const moveInstructionFile = (index: number, direction: -1 | 1) => {
+    setInstructionFiles((current) => {
+      const next = [...current];
+      const swapIdx = index + direction;
+      if (swapIdx < 0 || swapIdx >= next.length) return current;
+      [next[index], next[swapIdx]] = [next[swapIdx], next[index]];
+      return next;
+    });
+  };
+
+  const removeInstructionFile = (index: number) => {
+    setInstructionFiles((current) => current.filter((_, i) => i !== index));
+  };
+
   const handleSeedingSelection = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const selected = Array.from(files);
@@ -106,8 +160,8 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!domain.trim()) return;
-    if (!instructionFile) {
-      setError("An instruction/prompt file is required for every discovery run.");
+    if (instructionFiles.length === 0) {
+      setError("At least one instruction/prompt file is required for every discovery run.");
       return;
     }
     setError(null);
@@ -123,7 +177,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
         formData.append("target_segments", targetSegments.trim());
       }
       if (constitutionFile) formData.append("constitution_file", constitutionFile);
-      if (instructionFile) formData.append("instruction_file", instructionFile);
+      instructionFiles.forEach((file) => formData.append("instruction_files", file));
       if (sectorFile) formData.append("sector_file", sectorFile);
       seedingFiles.forEach((file) => formData.append("seeding_files", file));
 
@@ -188,8 +242,9 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
             type="file"
             aria-label="Instruction file upload"
             accept={ACCEPTED_FILE_TYPES}
+            multiple
             hidden
-            onChange={(e) => handleFileSelection(e.target.files?.[0] ?? null, setInstructionFile)}
+            onChange={(e) => handleInstructionSelection(e.target.files)}
             disabled={isGenerating}
           />
           <button
@@ -197,22 +252,49 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
             onClick={() => instructionInputRef.current?.click()}
             disabled={isGenerating}
           >
-            Upload Instruction / Guidance (required)
+            Add Prompt File (required)
           </button>
-          {instructionFile && (
-            <span className="upload-filename">
-              {instructionFile.name}
-              <button
-                type="button"
-                className="btn-sm"
-                onClick={() => setInstructionFile(null)}
-                disabled={isGenerating}
-              >
-                Clear
-              </button>
-            </span>
+          {instructionFiles.length === 0 && (
+            <span className="upload-hint">add 1 or more — processed in order</span>
           )}
         </div>
+        {instructionFiles.length > 0 && (
+          <div className="seed-files-list">
+            {instructionFiles.map((file, idx) => (
+              <div key={file.name} className="seed-file-item">
+                <span className="seed-index">{idx + 1}.</span>
+                <span>{file.name}</span>
+                <span className="seed-status">prompt</span>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => moveInstructionFile(idx, -1)}
+                  disabled={isGenerating || idx === 0}
+                  title="Move up"
+                >
+                  ▲
+                </button>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => moveInstructionFile(idx, 1)}
+                  disabled={isGenerating || idx === instructionFiles.length - 1}
+                  title="Move down"
+                >
+                  ▼
+                </button>
+                <button
+                  type="button"
+                  className="btn-sm"
+                  onClick={() => removeInstructionFile(idx)}
+                  disabled={isGenerating}
+                >
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="upload-row">
           <input
@@ -365,7 +447,7 @@ export function DomainInputPanel({ onGenerate, isGenerating }: Props) {
               ))}
             </select>
           </label>
-          <button type="submit" disabled={isGenerating || !domain.trim() || !instructionFile}>
+          <button type="submit" disabled={isGenerating || !domain.trim() || instructionFiles.length === 0}>
             {isGenerating ? "Generating..." : "Generate Manifest"}
           </button>
         </div>

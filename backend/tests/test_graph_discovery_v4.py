@@ -148,7 +148,7 @@ async def test_sector_receives_full_instruction_text():
     events = await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text=instruction,
+            instruction_texts=[instruction],
             k_depth=1,
         )
     )
@@ -178,7 +178,7 @@ async def test_sector_call_has_sector_scope_header():
     await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text=instruction,
+            instruction_texts=[instruction],
             k_depth=1,
         )
     )
@@ -209,7 +209,7 @@ async def test_entity_expansion_prompts_reference_entity_data():
     await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text="## 1. Domain Definition\nDPA.",
+            instruction_texts=["## 1. Domain Definition\nDPA."],
             k_depth=2,  # k_depth=2 triggers entity expansion
         )
     )
@@ -218,10 +218,10 @@ async def test_entity_expansion_prompts_reference_entity_data():
     # Total calls: 3 sector calls + up to 2 expansion calls (dedup via visited set)
     assert llm.complete.call_count >= 4  # at least 3 sector + 1 expansion
 
-    # Find entity expansion calls (they contain "## ENTITY EXPANSION")
+    # Find entity expansion calls (they contain "## NODE EXPANSION")
     expansion_calls = [
         call for call in llm.complete.call_args_list
-        if "## entity expansion" in call[0][0][-1]["content"].lower()
+        if "## node expansion" in call[0][0][-1]["content"].lower()
     ]
     assert len(expansion_calls) >= 1
 
@@ -248,7 +248,7 @@ async def test_sse_events_order():
     events = await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text="## 1. Domain Definition\nDPA.",
+            instruction_texts=["## 1. Domain Definition\nDPA."],
             k_depth=1,
         )
     )
@@ -277,7 +277,7 @@ async def test_all_items_persisted():
     await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text="## 1. Domain Definition\nDPA.",
+            instruction_texts=["## 1. Domain Definition\nDPA."],
             k_depth=1,
         )
     )
@@ -314,7 +314,7 @@ async def test_low_confidence_programs_flagged():
     await _collect_events(
         engine.run(
             "Test DPA Scan",
-            instruction_text="## 1. Domain Definition\nDPA.",
+            instruction_texts=["## 1. Domain Definition\nDPA."],
             k_depth=2,  # k_depth=2 triggers entity expansion where programs are persisted
         )
     )
@@ -347,7 +347,7 @@ async def test_manifest_name_not_in_sector_prompt_without_instruction():
     manifest_name = "DPA National Scan March 2026"
     engine = DiscoveryGraph(llm=llm, db=db, manifest_id="test-manifest-007")
     await _collect_events(
-        engine.run(manifest_name, k_depth=1, instruction_text="## 1. Domain Definition\nDown payment assistance programs.")
+        engine.run(manifest_name, k_depth=1, instruction_texts=["## 1. Domain Definition\nDown payment assistance programs."])
     )
 
     first_call_args = llm.complete.call_args_list[0]
@@ -376,7 +376,7 @@ async def test_constitution_text_in_sector_message():
         engine.run(
             "Test DPA Scan",
             constitution_text=constitution,
-            instruction_text="## 1. Domain Definition\nDPA.",
+            instruction_texts=["## 1. Domain Definition\nDPA."],
             k_depth=1,
         )
     )

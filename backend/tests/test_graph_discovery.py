@@ -145,7 +145,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-001")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         sector_starts = [e for e in events if e["event"] == "sector_start"]
@@ -158,7 +158,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-002")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         sector_completes = [e for e in events if e["event"] == "sector_complete"]
@@ -171,7 +171,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-003")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         assembly_events = [e for e in events if e["event"] == "l1_assembly_complete"]
@@ -186,7 +186,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-004")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         complete_events = [e for e in events if e["event"] == "complete"]
@@ -200,7 +200,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-005")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=2, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=2, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         expansion_starts = [e for e in events if e["event"] == "entity_expansion_start"]
@@ -218,7 +218,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-006")
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         expansion_events = [
@@ -239,7 +239,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         sector_starts = [e for e in events if e["event"] == "sector_start"]
@@ -280,7 +280,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         # All 3 sectors should complete (one with failed status)
@@ -305,7 +305,7 @@ class TestDiscoveryGraphV5Events:
             k_depth=2,
             seed_index={"cdfi": [{"name": "CDFI Grant"}]},
             seed_programs=[{"name": "CDFI Grant", "program_type": "cdfi"}],
-            instruction_text="TEST INSTRUCTION",
+            instruction_texts=["TEST INSTRUCTION"],
         ):
             events.append(event)
 
@@ -319,7 +319,7 @@ class TestDiscoveryGraphV5Events:
         llm = MockLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-010")
 
-        async for _ in graph.run("Test manifest", k_depth=1, instruction_text="TEST INSTRUCTION"):
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_texts=["TEST INSTRUCTION"]):
             pass
 
         assert len(llm.calls) >= 3  # at least 3 neutral runtime sector calls
@@ -330,7 +330,7 @@ class TestDiscoveryGraphV5Events:
         llm = MockLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-011")
 
-        async for _ in graph.run("Test manifest", k_depth=1, instruction_text="MY INSTRUCTION"):
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_texts=["MY INSTRUCTION"]):
             pass
 
         sector_calls = [
@@ -346,7 +346,7 @@ class TestDiscoveryGraphV5Events:
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-012")
 
         marker = "UNIQUE_INSTRUCTION_MARKER_XYZ"
-        async for _ in graph.run("Test manifest", k_depth=1, instruction_text=marker):
+        async for _ in graph.run("Test manifest", k_depth=1, instruction_texts=[marker]):
             pass
 
         calls_with_marker = [
@@ -360,7 +360,7 @@ class TestDiscoveryGraphV5Events:
         llm = MockLLM()
         graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-v5-013")
 
-        async for _ in graph.run("Test manifest", k_depth=2, instruction_text="TEST INSTRUCTION"):
+        async for _ in graph.run("Test manifest", k_depth=2, instruction_texts=["TEST INSTRUCTION"]):
             pass
 
         # db.add should have been called for entities, sources, programs, assessment
@@ -379,7 +379,7 @@ class TestDiscoveryGraphV5Events:
         ]
 
         events = []
-        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_text="TEST INSTRUCTION"):
+        async for event in graph.run("Test manifest", k_depth=1, sectors=custom_sectors, instruction_texts=["TEST INSTRUCTION"]):
             events.append(event)
 
         complete = [e for e in events if e["event"] == "complete"][0]
@@ -464,3 +464,256 @@ class TestSeedToEntityMapping:
             assert required in entity_types, (
                 f"Required entity type '{required}' missing from _SEED_TO_ENTITY_TYPE values"
             )
+
+
+# ---------------------------------------------------------------------------
+# Multi-Prompt L1 Loop Tests
+# ---------------------------------------------------------------------------
+
+class TestMultiPromptL1Loop:
+    """Tests for _run_l1_prompts() serial coordinator."""
+
+    @pytest.mark.asyncio
+    async def test_multi_prompt_fires_all_sector_passes(self, mock_db):
+        """With N instruction_texts, the engine fires N full sector passes."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-mp-001")
+
+        events = []
+        async for event in graph.run(
+            "Test manifest",
+            k_depth=1,
+            instruction_texts=["PROMPT ONE", "PROMPT TWO"],
+        ):
+            events.append(event)
+
+        prompt_starts = [e for e in events if e["event"] == "prompt_start"]
+        prompt_completes = [e for e in events if e["event"] == "prompt_complete"]
+        assert len(prompt_starts) == 2
+        assert len(prompt_completes) == 2
+
+    @pytest.mark.asyncio
+    async def test_multi_prompt_sector_calls_multiply(self, mock_db):
+        """With N prompts and M sectors, total sector calls = N * M."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-mp-002")
+
+        custom_sectors = [
+            {"key": "alpha", "label": "Alpha", "priority": 1},
+            {"key": "beta", "label": "Beta", "priority": 2},
+        ]
+
+        async for _ in graph.run(
+            "Test manifest",
+            k_depth=1,
+            sectors=custom_sectors,
+            instruction_texts=["PROMPT ONE", "PROMPT TWO"],
+        ):
+            pass
+
+        sector_calls = [c for c in llm.calls if "SECTOR SCOPE" in c["prompt"].upper()]
+        # 2 prompts x 2 sectors = 4 sector calls
+        assert len(sector_calls) == 4
+
+    @pytest.mark.asyncio
+    async def test_single_prompt_backwards_compatible(self, mock_db):
+        """Single instruction_texts list item is identical to old single-prompt behaviour."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-mp-003")
+
+        events = []
+        async for event in graph.run(
+            "Test manifest",
+            k_depth=1,
+            instruction_texts=["SINGLE PROMPT"],
+        ):
+            events.append(event)
+
+        prompt_starts = [e for e in events if e["event"] == "prompt_start"]
+        assert len(prompt_starts) == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_instruction_texts_raises(self, mock_db):
+        """Empty instruction_texts list raises ValueError."""
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-mp-004")
+
+        with pytest.raises(ValueError, match="instruction_texts is required"):
+            async for _ in graph.run("Test manifest", k_depth=1, instruction_texts=[]):
+                pass
+
+
+class TestCheckpointQueue:
+    """Tests for DiscoveryQueue snapshot serialization round-trip."""
+
+    def test_to_snapshot_captures_heap_and_visited(self):
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=3, max_size=100)
+        q.enqueue(target_type="entity", target_id="entity-a", priority=1, depth=0)
+        q.enqueue(target_type="entity", target_id="entity-b", priority=2, depth=1)
+
+        snap = q.to_snapshot()
+        assert len(snap["queue_items"]) == 2
+        assert "entity-a" in snap["visited"]
+        assert "entity-b" in snap["visited"]
+        assert snap["max_depth"] == 3
+        assert snap["max_size"] == 100
+
+    def test_from_snapshot_restores_queue(self):
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=3, max_size=100)
+        q.enqueue(target_type="entity", target_id="entity-x", priority=1, depth=0, metadata={"name": "X Entity"})
+        q.enqueue(target_type="source", target_id="source-y", priority=2, depth=1)
+        snap = q.to_snapshot()
+
+        restored = DiscoveryQueue.from_snapshot(snap)
+        assert restored.size() == 2
+        assert restored.is_visited("entity-x")
+        assert restored.is_visited("source-y")
+        assert restored.max_depth == 3
+
+    def test_round_trip_preserves_priority_order(self):
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=3)
+        q.enqueue(target_type="entity", target_id="low", priority=10, depth=0)
+        q.enqueue(target_type="entity", target_id="high", priority=1, depth=0)
+        snap = q.to_snapshot()
+
+        restored = DiscoveryQueue.from_snapshot(snap)
+        first = restored.pop()
+        assert first is not None
+        assert first.target_id == "high"  # priority=1 pops first
+
+    def test_visited_set_prevents_reenqueue_after_restore(self):
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=3)
+        q.enqueue(target_type="entity", target_id="seen-entity", priority=1, depth=0)
+        snap = q.to_snapshot()
+
+        restored = DiscoveryQueue.from_snapshot(snap)
+        result = restored.enqueue(target_type="entity", target_id="seen-entity", priority=1, depth=0)
+        assert result is False  # already visited
+
+    def test_l1_boundary_checkpoint_shape(self):
+        """Checkpoint dict must contain required plan-spec fields."""
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=3)
+        q.enqueue(target_type="entity", target_id="ent-1", priority=1, depth=0)
+        snap = q.to_snapshot()
+
+        checkpoint = {
+            "type": "l1_boundary",
+            "batch_n": 0,
+            "api_calls_used": 42,
+            "queue_items": snap["queue_items"],
+            "visited": snap["visited"],
+            "written_at": "2026-03-11T00:00:00Z",
+        }
+        assert checkpoint["type"] == "l1_boundary"
+        assert len(checkpoint["queue_items"]) == 1
+
+
+class TestResumeRoute:
+    """Tests for the resume route and run_resumed()."""
+
+    @pytest.mark.asyncio
+    async def test_run_resumed_emits_resume_start_and_complete(self, mock_db):
+        """run_resumed() must emit resume_start and complete events."""
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=2)
+        # No items — queue is empty, loop terminates immediately
+        snap = q.to_snapshot()
+        checkpoint = {
+            "type": "l1_boundary",
+            "batch_n": 0,
+            "api_calls_used": 10,
+            **snap,
+        }
+
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-resume-001")
+
+        events = []
+        async for event in graph.run_resumed("Test manifest", checkpoint=checkpoint, k_depth=2):
+            events.append(event)
+
+        event_types = [e["event"] for e in events]
+        assert "resume_start" in event_types
+        assert "complete" in event_types
+
+    @pytest.mark.asyncio
+    async def test_run_resumed_processes_queued_items(self, mock_db):
+        """run_resumed() with items in queue fires entity_expansion_start events."""
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=2)
+        q.enqueue(
+            target_type="entity",
+            target_id="nj-dobi",
+            priority=1,
+            depth=1,
+            metadata={"name": "NJ DOBI", "jurisdiction": "state"},
+        )
+        snap = q.to_snapshot()
+        checkpoint = {
+            "type": "l1_boundary",
+            "batch_n": 0,
+            "api_calls_used": 50,
+            **snap,
+        }
+
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-resume-002")
+
+        events = []
+        async for event in graph.run_resumed("Test manifest", checkpoint=checkpoint, k_depth=2):
+            events.append(event)
+
+        expansion_starts = [e for e in events if e["event"] == "entity_expansion_start"]
+        assert len(expansion_starts) == 1
+        assert expansion_starts[0]["data"]["entity_id"] == "nj-dobi"
+
+    @pytest.mark.asyncio
+    async def test_run_resumed_restores_visited_set(self, mock_db):
+        """Entities in visited set from checkpoint must not be re-enqueued."""
+        from app.agent.discovery_queue import DiscoveryQueue
+
+        q = DiscoveryQueue(max_depth=2)
+        q.enqueue(
+            target_type="entity",
+            target_id="entity-already-done",
+            priority=1,
+            depth=1,
+            metadata={"name": "Done Entity"},
+        )
+        snap = q.to_snapshot()
+        # Pop the item so queue is empty but visited set still has it
+        q.pop()
+        empty_snap = q.to_snapshot()
+        assert len(empty_snap["queue_items"]) == 0
+        assert "entity-already-done" in empty_snap["visited"]
+
+        checkpoint = {
+            "type": "l2_batch",
+            "batch_n": 1,
+            "api_calls_used": 100,
+            **empty_snap,
+        }
+
+        llm = MockLLM()
+        graph = DiscoveryGraph(llm=llm, db=mock_db, manifest_id="test-resume-003")
+
+        events = []
+        async for event in graph.run_resumed("Test manifest", checkpoint=checkpoint, k_depth=2):
+            events.append(event)
+
+        # Queue was empty, so no expansions should occur
+        expansion_starts = [e for e in events if e["event"] == "entity_expansion_start"]
+        assert len(expansion_starts) == 0
+

@@ -78,6 +78,13 @@ export interface ManifestDetail extends ManifestSummary {
     jurisdiction_hierarchy: unknown;
   };
   coverage_assessment: CoverageAssessment | null;
+  checkpoint_data?: Record<string, unknown> | null;
+  run_params?: {
+    llm_provider?: string;
+    llm_model?: string | null;
+    k_depth?: number;
+    geo_scope?: string;
+  } | null;
 }
 
 export interface GenerateRequest {
@@ -113,6 +120,11 @@ export interface AgentStepEvent {
   manifest_id?: string;
   total_sources?: number;
   coverage_score?: number;
+  api_calls?: number;
+  // checkpoint fields
+  type?: string;
+  batch_n?: number;
+  items_remaining?: number;
 }
 
 export interface AgentProgressEvent {

@@ -7,6 +7,7 @@ empty lists or 404s, which is the expected behavior.
 
 import pytest
 
+from app.database import get_db
 from app.routers import manifests as manifests_router
 
 # --- Health ---
@@ -97,7 +98,7 @@ async def test_generate_manifest_multipart_with_instruction_only(client, monkeyp
             "llm_provider": "openai",
         },
         files={
-            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+            "instruction_files": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
         },
     )
     assert resp.status_code == 202
@@ -121,7 +122,7 @@ async def test_list_manifests_reconciles_orphaned_generating_runs(client, monkey
             "llm_provider": "openai",
         },
         files={
-            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+            "instruction_files": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
         },
     )
     assert resp.status_code == 202
@@ -150,7 +151,7 @@ async def test_stream_manifest_reports_reconciled_orphaned_generation(client, mo
             "llm_provider": "openai",
         },
         files={
-            "instruction_file": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
+            "instruction_files": ("instruction.txt", b"focus on insurance regulators", "text/plain"),
         },
     )
     assert resp.status_code == 202
@@ -176,7 +177,7 @@ async def test_generate_manifest_multipart_with_attachments(client, monkeypatch)
 
     files = {
         "constitution_file": ("constitution.md", b"must do guardrails", "text/markdown"),
-        "instruction_file": ("instruction.txt", b"focus on federal and all states", "text/plain"),
+        "instruction_files": ("instruction.txt", b"focus on federal and all states", "text/plain"),
     }
     resp = await client.post(
         "/api/manifests/generate",
@@ -212,7 +213,7 @@ async def test_generate_manifest_multipart_with_seeding_files(client, monkeypatc
             "k_depth": "3",
         },
         files=[
-            ("instruction_file", ("instruction.txt", b"focus on insurance regulators", "text/plain")),
+            ("instruction_files", ("instruction.txt", b"focus on insurance regulators", "text/plain")),
             *files,
         ],
     )
@@ -220,6 +221,54 @@ async def test_generate_manifest_multipart_with_seeding_files(client, monkeypatc
     data = resp.json()
     assert "manifest_id" in data
     assert data["status"] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_multi_prompt(client, monkeypatch):
+    """Multiple instruction_files are accepted and threaded as instruction_texts list."""
+    received_texts: list[list[str]] = []
+
+    async def _capture_run_agent(*args, **kwargs):
+        received_texts.append(kwargs.get("instruction_texts", []))
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _capture_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "manifest_name": "US insurance regulation multi-prompt",
+            "llm_provider": "openai",
+        },
+        files=[
+            ("instruction_files", ("1-federal.txt", b"Find all federal insurance regulators", "text/plain")),
+            ("instruction_files", ("2-state.txt", b"Find all 56 state and territorial regulators", "text/plain")),
+            ("instruction_files", ("3-standards.txt", b"Find all standards and advisory bodies", "text/plain")),
+        ],
+    )
+    assert resp.status_code == 202
+    data = resp.json()
+    assert "manifest_id" in data
+    assert data["status"] == "generating"
+
+
+@pytest.mark.asyncio
+async def test_generate_manifest_multipart_without_instruction_files_rejects(client, monkeypatch):
+    """Sending no instruction_files returns 422."""
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={
+            "manifest_name": "US insurance regulation",
+            "llm_provider": "openai",
+        },
+    )
+    assert resp.status_code == 422
+    data = resp.json()
+    assert data["error"] is True
 
 
 @pytest.mark.asyncio
@@ -518,3 +567,72 @@ async def test_validation_error_format(client):
     assert len(data["errors"]) > 0
     assert "field" in data["errors"][0]
     assert "message" in data["errors"][0]
+
+
+@pytest.mark.asyncio
+async def test_resume_manifest_404_when_not_found(client):
+    """POST /resume returns 404 for non-existent manifest."""
+    resp = await client.post("/api/manifests/nonexistent-id/resume")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resume_manifest_409_when_no_checkpoint(client, monkeypatch):
+    """POST /resume returns 409 when manifest exists but has no checkpoint_data."""
+    async def _noop_run_agent(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent", _noop_run_agent)
+
+    # First create a manifest
+    resp = await client.post(
+        "/api/manifests/generate",
+        data={"manifest_name": "test domain no checkpoint", "llm_provider": "openai"},
+        files=[("instruction_files", ("inst.txt", b"Find regulators", "text/plain"))],
+    )
+    assert resp.status_code == 202
+    manifest_id = resp.json()["manifest_id"]
+
+    # Resume should fail — no checkpoint
+    resp2 = await client.post(f"/api/manifests/{manifest_id}/resume")
+    assert resp2.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_resume_manifest_202_when_checkpoint_present(client, monkeypatch):
+    """POST /resume returns 202 when manifest has checkpoint_data."""
+    from app.models.manifest import Manifest, ManifestStatus
+    from tests.conftest import TestSession
+
+    async def _noop_run_agent_resumed(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(manifests_router, "_run_agent_resumed", _noop_run_agent_resumed)
+
+    # Directly create a manifest in pending_review with checkpoint_data using
+    # the test session (SQLite in-memory, same engine as the route's get_db override)
+    manifest_id = "raris-test-resume-checkpoint-001"
+    async with TestSession() as db:
+        manifest = Manifest(
+            id=manifest_id,
+            domain="test domain with checkpoint",
+            status=ManifestStatus.pending_review,
+            created_by="test",
+        )
+        manifest.checkpoint_data = {
+            "type": "l1_boundary",
+            "batch_n": 0,
+            "api_calls_used": 42,
+            "queue_items": [],
+            "visited": [],
+            "written_at": "2026-03-11T00:00:00Z",
+        }
+        db.add(manifest)
+        await db.commit()
+
+    # Resume should work — no active queue, checkpoint present
+    resp = await client.post(f"/api/manifests/{manifest_id}/resume")
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["manifest_id"] == manifest_id
+    assert "stream_url" in data

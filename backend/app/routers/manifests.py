@@ -107,6 +107,12 @@ async def generate_manifest(
         domain=domain,
         status=ManifestStatus.generating,
         created_by="domain-discovery-agent-v1",
+        run_params={
+            "llm_provider": payload.llm_provider,
+            "llm_model": payload.llm_model,
+            "k_depth": payload.k_depth,
+            "geo_scope": payload.geo_scope,
+        },
     )
     db.add(manifest)
     await db.commit()
@@ -130,7 +136,7 @@ async def generate_manifest(
         payload.seed_programs,
         payload.seed_metrics,
         payload.constitution_text,
-        payload.instruction_text,
+        payload.instruction_texts,
     )
 
     return GenerateManifestResponse(
@@ -185,7 +191,7 @@ class _GeneratePayload:
         seed_programs: list[dict],
         seed_metrics: dict,
         constitution_text: str = "",
-        instruction_text: str = "",
+        instruction_texts: list[str] | None = None,
     ) -> None:
         self.manifest_name = manifest_name
         self.llm_provider = llm_provider
@@ -198,7 +204,7 @@ class _GeneratePayload:
         self.seed_programs = seed_programs
         self.seed_metrics = seed_metrics
         self.constitution_text = constitution_text
-        self.instruction_text = instruction_text
+        self.instruction_texts: list[str] = instruction_texts or []
 
 
 def _raise_missing_domain_validation() -> None:
@@ -516,7 +522,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             seed_anchors=[],
             seed_programs=[],
             seed_metrics={},
-            instruction_text=parsed.instruction_text or "",
+            instruction_texts=[parsed.instruction_text or ""],
         )
 
     if "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
@@ -567,7 +573,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
         llm_model = str(raw_llm_model).strip() if raw_llm_model else None
 
         constitution_upload = form.get("constitution_file")
-        instruction_upload = form.get("instruction_file")
+        instruction_uploads = form.getlist("instruction_files")
         sector_upload = form.get("sector_file")
         seed_uploads = form.getlist("seeding_files")
 
@@ -575,9 +581,12 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
         if isinstance(constitution_upload, (UploadFile, StarletteUploadFile)):
             constitution_text = await _extract_upload_text(constitution_upload)
 
-        instruction_text = ""
-        if isinstance(instruction_upload, (UploadFile, StarletteUploadFile)):
-            instruction_text = await _extract_upload_text(instruction_upload)
+        instruction_texts: list[str] = []
+        for instr_upload in instruction_uploads:
+            if isinstance(instr_upload, (UploadFile, StarletteUploadFile)):
+                text = await _extract_upload_text(instr_upload)
+                if text.strip():
+                    instruction_texts.append(text)
 
         sectors: list[dict] = []
         if isinstance(sector_upload, (UploadFile, StarletteUploadFile)):
@@ -594,8 +603,8 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
             seed_programs.extend(programs)
             file_metrics.append(metrics)
 
-        if not instruction_text.strip():
-            _raise_missing_instruction_validation("instruction_file")
+        if not instruction_texts:
+            _raise_missing_instruction_validation("instruction_files")
 
         return _GeneratePayload(
             manifest_name=parsed.manifest_name,
@@ -618,7 +627,7 @@ async def _parse_generate_request(request: Request) -> _GeneratePayload:
                 ],
             },
             constitution_text=constitution_text,
-            instruction_text=instruction_text,
+            instruction_texts=instruction_texts,
         )
 
     raise HTTPException(status_code=415, detail="Unsupported content type")
@@ -637,7 +646,7 @@ async def _run_agent(
     seed_programs: list[dict] | None = None,
     seed_metrics: dict | None = None,
     constitution_text: str = "",
-    instruction_text: str = "",
+    instruction_texts: list[str] | None = None,
 ):
     """Run the V5 BFS discovery engine in background and push events to the queue."""
     queue = _event_queues.get(manifest_id)
@@ -657,7 +666,7 @@ async def _run_agent(
                 seed_programs=seed_programs or [],
                 seed_anchors=seed_anchors or [],
                 constitution_text=constitution_text,
-                instruction_text=instruction_text,
+                instruction_texts=instruction_texts or [],
             ):
                 if queue:
                     await queue.put(event)
@@ -676,6 +685,100 @@ async def _run_agent(
     finally:
         if queue:
             await queue.put(None)  # Sentinel to close SSE stream
+
+
+async def _run_agent_resumed(
+    manifest_id: str,
+    manifest_name: str,
+    llm_provider: str,
+    llm_model: str | None = None,
+    k_depth: int = 2,
+    checkpoint: dict | None = None,
+):
+    """Resume a halted BFS discovery from a checkpoint — skips L1, continues L2."""
+    queue = _event_queues.get(manifest_id)
+    try:
+        from app.agent.graph_discovery import DiscoveryGraph
+
+        provider = get_provider(llm_provider, model=llm_model)
+        async with async_session() as db:
+            agent = DiscoveryGraph(llm=provider, db=db, manifest_id=manifest_id)
+            async for event in agent.run_resumed(
+                manifest_name,
+                checkpoint=checkpoint or {},
+                k_depth=k_depth,
+            ):
+                if queue:
+                    await queue.put(event)
+    except Exception:
+        logger.exception("Agent resume failed for manifest %s", manifest_id)
+        if queue:
+            await queue.put({
+                "event": "error",
+                "data": {"message": "Resume run failed. Check server logs."},
+            })
+        async with async_session() as db:
+            manifest = await db.get(Manifest, manifest_id)
+            if manifest:
+                manifest.status = ManifestStatus.pending_review
+                await db.commit()
+    finally:
+        if queue:
+            await queue.put(None)
+
+
+@router.post("/{manifest_id}/resume", status_code=202, response_model=GenerateManifestResponse)
+async def resume_manifest(
+    manifest_id: str,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+):
+    """Resume a halted discovery run from its last saved checkpoint.
+
+    The manifest must have ``checkpoint_data`` stored (written at L1 boundary or
+    every 50 L2 items). L1 is skipped — the BFS queue is restored from the
+    checkpoint and expansion continues.
+    """
+    manifest = await db.get(Manifest, manifest_id)
+    if not manifest:
+        raise HTTPException(status_code=404, detail="Manifest not found")
+    if not manifest.checkpoint_data:
+        raise HTTPException(
+            status_code=409,
+            detail="No checkpoint available for this manifest. Run a fresh generation first.",
+        )
+    if manifest_id in _event_queues:
+        raise HTTPException(
+            status_code=409,
+            detail="A generation stream for this manifest is already active.",
+        )
+
+    manifest.status = ManifestStatus.generating
+    await db.commit()
+
+    _event_queues[manifest_id] = asyncio.Queue()
+
+    # Restore original run settings from stored run_params; fall back to config defaults
+    run_params = manifest.run_params or {}
+    resume_provider = run_params.get("llm_provider") or settings.llm_provider
+    resume_model = run_params.get("llm_model") or None
+    resume_k_depth = run_params.get("k_depth") or 2
+
+    background_tasks.add_task(
+        _run_agent_resumed,
+        manifest_id,
+        manifest.domain,
+        resume_provider,
+        resume_model,
+        resume_k_depth,
+        manifest.checkpoint_data,
+    )
+
+    return GenerateManifestResponse(
+        manifest_id=manifest_id,
+        status="generating",
+        stream_url=f"/api/manifests/{manifest_id}/stream",
+    )
 
 
 @router.get("/{manifest_id}/stream")

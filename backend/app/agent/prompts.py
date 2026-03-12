@@ -480,24 +480,27 @@ SECTOR_SCOPE_HEADER = """\
 
 EXPANSION_TEMPLATES: dict[str, str] = {
 
-    # Regulator: state/federal department — ask for top-level statute and admin code titles
+    # Regulator: state/federal department — ask for statute/admin code titles and immediate chapters
     "node:entity:regulator": (
         "You are examining the regulatory body: {name} ({url}).\n"
         "Jurisdiction: {jurisdiction_code}. Citation format: {citation_hint}.\n\n"
-        "YOUR TASK — ONE LEVEL ONLY:\n"
-        "List ONLY the top-level statute titles and administrative code titles "
-        "that this body administers or enforces.\n\n"
-        "Return each title as one sources[] entry. "
-        "Use depth_hint='title' for every entry.\n\n"
+        "YOUR TASK — TWO LEVELS:\n"
+        "List the top-level statute titles and administrative code titles that this body "
+        "administers or enforces, AND their immediate named chapters or parts.\n\n"
+        "Return each entry as one sources[] object. "
+        "Classify each entry using depth_hint:\n"
+        "- depth_hint='title' for top-level groupings "
+        "  (e.g. '{citation_hint} Title 17', '[Admin Code] Title 11')\n"
+        "- depth_hint='chapter' for named chapters, parts, or sub-titles under a title "
+        "  (e.g. '{citation_hint} Title 17 Ch. 1 — Licensing')\n\n"
         "RULES:\n"
-        "- Do NOT enumerate chapters, parts, sections, or sub-sections here. "
+        "- Do NOT enumerate individual sections or sub-sections. "
         "  Those will be discovered in subsequent calls.\n"
-        "- Each title gets its own sources[] object "
-        "  (e.g. '{citation_hint} Title 17', '{citation_hint} Title 17B', "
-        "  '[Admin Code] Title 11').\n"
         "- Also list bulletins and circular index pages as single entries "
         "  (depth_hint='leaf').\n"
-        "- Include the {citation_hint} identifier in the 'name' field of every entry."
+        "- Include the {citation_hint} identifier in the 'name' field of every entry.\n"
+        "- If you are uncertain of the exact title structure, list the chapters you know "
+        "  under a best-effort title grouping — partial coverage is better than empty."
     ),
 
     # GSE / federal quasi-governmental — CFR titles and USC chapters

@@ -60,9 +60,10 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     # Discovery safety caps
-    max_api_calls: int = 500  # Maximum LLM calls per discovery run
+    max_api_calls: int = 3000  # Maximum LLM calls per discovery run
     max_discovery_depth: int = 3  # Maximum BFS depth (queue won't enqueue beyond this)
-    max_entities_per_sector: int = 50  # Cap entities returned per sector call
+    max_entities_per_sector: int = 200  # Cap entities returned per sector call
+    l2_sleep_between_calls: float = 0.4  # Seconds to sleep between L2 expand calls (Gemini Tier 1 = 150 RPM; set 0 for tests)
 
     # LLM call logging
     llm_logging: str = "ON"  # ON|OFF — master toggle for structured LLM call logs
